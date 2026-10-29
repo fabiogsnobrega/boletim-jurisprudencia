@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Project data files (keep directory structure via .gitkeep)
+data/**/*
+!data/**/
+!data/**/.gitkeep
