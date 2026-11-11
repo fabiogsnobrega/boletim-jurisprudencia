@@ -46,3 +46,107 @@ def test_database_operations() -> None:
     excluiu = excluir_decisao(novo_id)
     assert excluiu is True
     assert len(listar_decisoes()) == total_antes
+
+
+def test_responsavel_mes_ciclo() -> None:
+    from datetime import date
+    from database import calcular_ciclo_mensal, salvar_responsavel_mes, verificar_status_responsavel
+
+    ini, fim = calcular_ciclo_mensal(date(2026, 10, 15))
+    assert ini == "2026-10-02"
+    assert fim == "2026-11-01"
+
+    ini_dia1, fim_dia1 = calcular_ciclo_mensal(date(2026, 11, 1))
+    assert ini_dia1 == "2026-10-02"
+    assert fim_dia1 == "2026-11-01"
+
+    # Salva e testa validação
+    salvar_responsavel_mes("teste@marcosinacio.adv.br", "123", ini, fim)
+    valido, _, resp = verificar_status_responsavel()
+    assert resp is not None
+    assert resp["email"] == "teste@marcosinacio.adv.br"
+
+
+def test_hash_e_duplicatas() -> None:
+    from database import calcular_hash_decisao, excluir_decisao, inserir_decisao
+
+    decisao = {
+        "tribunal": "TRF5",
+        "tipo": "Julgado de Turma",
+        "identificador": "Teste Hash 01",
+        "titulo": "Decisao para Teste de Hash e Duplicatas",
+        "ramo": "Direito Administrativo / Servidor Público",
+        "status": "Transitado em Julgado",
+        "processo_origem": "0800000-00.2026.4.05.0000",
+        "tese_resumo": "Tese com hash para garantia de unicidade.",
+    }
+
+    hash_val = calcular_hash_decisao(decisao)
+    assert len(hash_val) == 64  # SHA-256 hexdigest
+
+    id1 = inserir_decisao(decisao, usuario="tester@marcosinacio.adv.br", origem="boletim_teste.pdf")
+    assert id1 > 0
+
+    # Inserção duplicada deve ser detectada e retornar 0
+    id2 = inserir_decisao(decisao, usuario="tester@marcosinacio.adv.br", origem="boletim_teste.pdf")
+    assert id2 == 0
+
+    excluir_decisao(id1)
+
+
+def test_acoes_em_lote_revisao() -> None:
+    from database import (
+        aceitar_candidatos_em_lote,
+        adicionar_a_fila_revisao,
+        excluir_decisao,
+        listar_fila_revisao,
+        rejeitar_candidatos_em_lote,
+    )
+
+    c1 = {
+        "tribunal": "TRF1",
+        "tipo": "Julgado",
+        "identificador": "LOTE-001",
+        "titulo": "Item Lote 1",
+        "ramo": "Direito Militar",
+        "status": "Transitado em Julgado",
+        "tese_resumo": "Tese lote 1",
+    }
+    c2 = {
+        "tribunal": "TRF1",
+        "tipo": "Julgado",
+        "identificador": "LOTE-002",
+        "titulo": "Item Lote 2",
+        "ramo": "Direito Militar",
+        "status": "Transitado em Julgado",
+        "tese_resumo": "Tese lote 2",
+    }
+    c3 = {
+        "tribunal": "TRF1",
+        "tipo": "Julgado",
+        "identificador": "LOTE-003",
+        "titulo": "Item Lote 3",
+        "ramo": "Direito Militar",
+        "status": "Transitado em Julgado",
+        "tese_resumo": "Tese lote 3",
+    }
+
+    id_f1 = adicionar_a_fila_revisao(c1, criado_por="teste@lote.com")
+    id_f2 = adicionar_a_fila_revisao(c2, criado_por="teste@lote.com")
+    id_f3 = adicionar_a_fila_revisao(c3, criado_por="teste@lote.com")
+
+    # Aceita c1 e c2 em lote
+    aceitos, dups = aceitar_candidatos_em_lote([id_f1, id_f2], revisor="revisor@lote.com")
+    assert aceitos == 2
+    assert dups == 0
+
+    # Rejeita c3 em lote
+    rejeitados = rejeitar_candidatos_em_lote([id_f3], revisor="revisor@lote.com")
+    assert rejeitados == 1
+
+    # Limpeza no banco oficial
+    from database import listar_decisoes
+    todas = listar_decisoes()
+    for d in todas:
+        if d["identificador"] in ("LOTE-001", "LOTE-002"):
+            excluir_decisao(d["id"])

@@ -21,3 +21,4 @@ def test_extrair_decisoes_snippet() -> None:
     assert "1444" in decisoes[0]["identificador"]
     assert decisoes[0]["em_alerta"] == 1
     assert decisoes[0]["data_limite_verificacao"] is not None
+    assert decisoes[0]["avisos_validacao"]

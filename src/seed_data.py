@@ -1,6 +1,6 @@
 """Script para popular o banco de dados com a carga inicial de jurisprudência real."""
 
-from database import get_connection, init_db, inserir_decisao
+from database import calcular_ciclo_mensal, init_db, inserir_decisao, resetar_sequencia_banco, salvar_responsavel_mes
 
 DECISOES_INICIAIS = [
     # --- STF ---
@@ -345,15 +345,24 @@ DECISOES_INICIAIS = [
 
 
 def seed() -> None:
-    """Inicializa e insere a carga de dados limpa."""
+    """Inicializa e insere a carga de dados limpa, reiniciando o ID em 1."""
     init_db()
-    with get_connection() as conn:
-        conn.cursor().execute("DELETE FROM decisoes")
-        conn.commit()
+    resetar_sequencia_banco()
 
     for dec in DECISOES_INICIAIS:
         inserir_decisao(dec)
-    print(f"Carga inicial concluída: {len(DECISOES_INICIAIS)} decisões cadastradas no SQLite!")
+
+    # Cadastra o responsável inicial exemplo para o ciclo mensal corrente
+    ini, fim = calcular_ciclo_mensal()
+    salvar_responsavel_mes(
+        email="responsavel@marcosinacio.adv.br",
+        senha="123",
+        data_inicio=ini,
+        data_fim=fim,
+    )
+
+    print(f"Carga inicial concluída: {len(DECISOES_INICIAIS)} decisões cadastradas no SQLite (IDs 1 a {len(DECISOES_INICIAIS)})!")
+    print(f"Ciclo mensal ativo: {ini} a {fim}")
 
 
 if __name__ == "__main__":
