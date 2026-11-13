@@ -1,7 +1,9 @@
 """Renderização da fila de revisão e composição de observações sugeridas."""
 
 import math
+import os
 import re
+import hashlib
 
 import streamlit as st
 
@@ -9,6 +11,7 @@ from database import (
     aceitar_candidato,
     aceitar_candidatos_em_lote,
     atualizar_candidato,
+    buscar_decisoes_correlatas,
     encontrar_duplicatas_fila,
     excluir_candidatos_fila,
     excluir_todas_pendencias_revisao,
@@ -17,60 +20,61 @@ from database import (
     revisar_candidato,
 )
 from agents.classifier.classifier import classificador_global
-from services.audit import registrar_evento
+from agents.ai_analyst.analyst import gerar_analise_inteligente, obter_chave_gemini
 
 
-def gerar_sugestao_observacao(dados: dict) -> str:
-    """Cria um rascunho curto a partir do conteúdo extraído, sem chamada a modelo."""
-    conteudo = " ".join(str(dados.get("texto_original") or dados.get("tese_resumo") or "").split())
-    conteudo = re.sub(r"^Boletim Informativo de Jurisprudência\s*[•·-]?\s*\d*\s*", "", conteudo, flags=re.IGNORECASE)
-    frases = re.split(r"(?<=[.!?])\s+", conteudo)
-    resumo = " ".join(frases[:2]).strip()
-    if len(resumo) > 360:
-        resumo = resumo[:357].rsplit(" ", 1)[0] + "..."
-    if not resumo:
-        resumo = str(dados.get("titulo") or "Conteúdo da decisão ainda precisa ser conferido.")
-
-    ramo = str(dados.get("ramo") or "").casefold()
-    if "concurso" in ramo:
-        utilizacao = "Pode servir de referência em demandas de concurso público com discussão semelhante sobre edital, convocação, nomeação ou preterição."
-    elif "militar" in ramo:
-        utilizacao = "Pode servir de referência em demandas de militares com fatos e fundamento jurídico semelhantes."
-    elif "servidor" in ramo or "administrativo" in ramo:
-        utilizacao = "Pode servir de referência em demandas de servidores ou de Direito Administrativo com fatos e fundamento jurídico semelhantes."
-    else:
-        utilizacao = "Pode servir de referência em casos com fatos e fundamento jurídico semelhantes, após conferência da aderência ao caso concreto."
-    return f"Resumo da demanda: {resumo}\n\nPossível utilização: {utilizacao}"
-
-
-def render_review_tab(tab_revisao, pode_editar: bool) -> None:
+def render_review_tab(tab_revisao, pode_editar: bool, eh_admin: bool = False, *args, **kwargs) -> None:
     """Renderiza o fluxo de revisão em lote e individual da fila."""
     if pode_editar and tab_revisao is not None:
         with tab_revisao:
-            pendentes = listar_fila_revisao()
+            pendentes = listar_fila_revisao(duplicatas_primeiro=True)
             st.subheader("📋 Decisões aguardando revisão")
-            st.caption("Selecione decisões para adicionar ou excluir em lote, ou abra para conferir detalhes e editar.")
+            st.caption("As decisões duplicadas são exibidas primeiro. Marque caixas de seleção para adicionar ou excluir em lote.")
+
+            # Painel de inteligência exclusivo para o Administrador Principal
+            if eh_admin:
+                with st.expander("⚙️ Opções avançadas e Configuração da IA (Google Gemini)", expanded=False):
+                    col_gemini1, col_gemini2 = st.columns([3, 1])
+                    with col_gemini1:
+                        chave_atual = obter_chave_gemini()
+                        nova_chave = st.text_input(
+                            "Chave de API do Google Gemini (opcional para análise de captação):",
+                            value=chave_atual or "",
+                            type="password",
+                            placeholder="AIzaSy...",
+                            help="Se fornecida, as observações são geradas pelo Gemini com foco em explicação da decisão e público-alvo para captação.",
+                        )
+                        if nova_chave != (chave_atual or ""):
+                            os.environ["GEMINI_API_KEY"] = nova_chave.strip()
+                            st.success("Chave de API do Gemini salva para esta sessão!")
+                    with col_gemini2:
+                        st.write("")
+                        st.write("")
+                        st.caption("Sem chave, o sistema usa o motor de regras jurídicas local com hashtags e público-alvo.")
 
             grupos_fila_duplicados = encontrar_duplicatas_fila()
             if grupos_fila_duplicados:
                 total_copias_fila = sum(len(grupo) - 1 for grupo in grupos_fila_duplicados)
-                with st.expander(f"Possíveis duplicatas na fila ({total_copias_fila} cópias)"):
-                    st.caption("Agrupadas pelo mesmo tribunal e número de processo CNJ. Em cada grupo, a versão com mais conteúdo será mantida.")
+                with st.expander(f"⚠️ Possíveis duplicatas agrupadas na fila ({total_copias_fila} cópias detectadas)"):
+                    st.caption("Agrupadas pelo mesmo tribunal e número de processo CNJ. A versão com mais conteúdo é preservada.")
                     for grupo in grupos_fila_duplicados:
+                        docs = {g.get("documento") or g.get("origem") for g in grupo}
+                        motivo_grp = "Mesmo arquivo enviado 2x" if len(docs) == 1 else "Processo citado em boletins diferentes"
                         st.markdown(
-                            f"**{grupo[0]['dados'].get('tribunal')} · {grupo[0]['dados'].get('processo_origem') or grupo[0]['dados'].get('identificador')}**"
+                            f"**{grupo[0]['dados'].get('tribunal')} · {grupo[0]['dados'].get('processo_origem') or grupo[0]['dados'].get('identificador')}** "
+                            f"<span style='color: #D89C1B; font-size: 0.85rem;'>({motivo_grp})</span>",
+                            unsafe_allow_html=True,
                         )
                         for registro in grupo:
                             st.caption(
                                 f"ID {registro['id']} · {registro['dados'].get('titulo', '')} · "
-                                f"{registro['dados']['_tamanho_conteudo']} caracteres"
+                                f"{registro['dados']['_tamanho_conteudo']} caracteres · Doc: {registro.get('documento') or 'não informado'}"
                             )
                     confirmar_deduplicacao_fila = st.checkbox("Confirmo a remoção das cópias identificadas", key="confirmar_deduplicacao_fila")
                     if st.button("Remover cópias da fila", key="remover_duplicatas_fila"):
                         if confirmar_deduplicacao_fila:
                             ids_remover = [registro["id"] for grupo in grupos_fila_duplicados for registro in grupo[1:]]
-                            removidas = excluir_candidatos_fila(ids_remover)
-                            registrar_evento(st.session_state.get("email_logado"), "deduplicar", "fila_revisao", detalhes={"removidas": removidas})
+                            removidas = excluir_candidatos_fila(ids_remover, ator=st.session_state.get("email_logado"))
                             st.success(f"{removidas} cópias removidas da fila.")
                             st.rerun()
                         else:
@@ -81,8 +85,7 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                 confirmar_limpeza = st.checkbox("Confirmo a exclusão de todas as pendências", key="confirmar_limpeza_fila")
                 if st.button("Excluir todas as pendências", key="limpar_fila_revisao"):
                     if confirmar_limpeza:
-                        removidas = excluir_todas_pendencias_revisao()
-                        registrar_evento(st.session_state.get("email_logado"), "excluir_pendencias", "fila_revisao", detalhes={"removidas": removidas})
+                        removidas = excluir_todas_pendencias_revisao(ator=st.session_state.get("email_logado"))
                         st.success(f"{removidas} pendências excluídas.")
                         st.rerun()
                     else:
@@ -107,8 +110,7 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
             fim_idx = min(inicio_idx + itens_por_pagina, total_pendentes)
             lote = pendentes[inicio_idx:fim_idx]
 
-            # Contagem de selecionados globais e da página atual
-            selecionados_pagina = [item["id"] for item in lote if st.session_state.get(f"sel_revisao_{item['id']}", False)]
+            # Contagem de selecionados
             selecionados_todos = [item["id"] for item in pendentes if st.session_state.get(f"sel_revisao_{item['id']}", False)]
 
             # Barra superior de controle de lote e paginação
@@ -157,6 +159,8 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                 num_global = inicio_idx + idx_relativo
                 dados = item["dados"]
                 item_id = item["id"]
+                eh_duplicata = item.get("_duplicata", False)
+                motivo_dup = item.get("_motivo_duplicata", "")
 
                 col_chk, col_card = st.columns([0.07, 0.93])
                 with col_chk:
@@ -168,8 +172,13 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                     )
 
                 with col_card:
-                    titulo_expander = f"#{num_global} · {dados.get('identificador', 'Sem identificador')} — {dados.get('titulo', 'Sem título')}"
+                    indicador_dup = "⚠️ [DUPLICATA] " if eh_duplicata else ""
+                    titulo_expander = f"{indicador_dup}#{num_global} · {dados.get('identificador', 'Sem identificador')} — {dados.get('titulo', 'Sem título')}"
+
                     with st.expander(titulo_expander, expanded=False):
+                        if eh_duplicata:
+                            st.warning(f"⚠️ **Atenção: Decisão com duplicidade na fila.**\n\n*Motivo identificado:* {motivo_dup}")
+
                         st.caption(
                             f"Origem: {item.get('origem') or 'não informada'} · "
                             f"Documento: {item.get('documento') or 'não informado'} · "
@@ -188,22 +197,61 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                         if dados.get("em_alerta"):
                             st.warning(f"Acompanhamento sugerido: {dados.get('prazo_alerta') or 'prazo a revisar'}")
 
-                        st.markdown("**Tese / conteúdo extraído:**")
-                        st.write(dados.get("texto_original") or dados.get("tese_resumo") or "O documento não forneceu texto para este campo.")
+                        # Resumo curto da tese
+                        st.markdown("**Tese / Síntese:**")
+                        st.write(dados.get("tese_resumo") or dados.get("texto_original") or "O documento não forneceu texto para este campo.")
 
+                        # Opção para ler o texto completo com caixa de rolagem
+                        texto_integral = str(dados.get("texto_original") or dados.get("tese_resumo") or "").strip()
+                        if texto_integral:
+                            with st.expander("📖 Ler texto completo da decisão", expanded=False):
+                                st.text_area(
+                                    "Texto Integral do Acórdão / Boletim",
+                                    value=texto_integral,
+                                    height=300,
+                                    disabled=True,
+                                    key=f"txt_integral_{item_id}",
+                                )
+
+                        # Matéria identificada pelo classificador (direta, sem porcentagem)
                         sugestao_relevancia = classificador_global.sugerir_relevancia(dados)
-                        st.info(f"🎯 **Classificador Temático:** {sugestao_relevancia}")
+                        st.info(f"⚖️ {sugestao_relevancia}")
 
-                        sugestao_observacao = gerar_sugestao_observacao(dados)
-                        st.info(f"💡 Sugestão de observação — rascunho para conferência\n\n{sugestao_observacao}")
-                        usar_sugestao = st.checkbox("Aceitar a sugestão como observação", key=f"usar_sugestao_{item_id}")
+                        # Verificação se o tema já foi trabalhado na base oficial
+                        correlatas = buscar_decisoes_correlatas(dados, limite=3)
+                        if correlatas:
+                            st.markdown("🔍 **Decisões com temas correlatos já existentes na base:**")
+                            for c in correlatas:
+                                st.caption(f"• **{c['identificador']}** ({c['tribunal']}): *{c['titulo']}* — Ramo: {c['ramo']} ({c['status']})")
+
+                        # O texto só é enviado ao Gemini após escolha e clique explícitos.
+                        st.markdown("---")
+                        st.markdown("💡 **Sugestão de Análise Estratégica & Captação:**")
+                        enviar_gemini = st.checkbox(
+                            "Autorizo enviar o texto desta decisão ao Google Gemini para gerar uma análise",
+                            key=f"consentir_gemini_{item_id}",
+                            help="O conteúdo da decisão será transmitido ao Google quando você clicar no botão abaixo.",
+                        )
+                        if st.button("Gerar análise sugerida", key=f"gerar_analise_{item_id}"):
+                            digest = hashlib.sha256(str(dados.get("texto_original") or dados.get("tese_resumo") or "").encode("utf-8")).hexdigest()
+                            analise = gerar_analise_inteligente(dados, usar_ia=enviar_gemini)
+                            st.session_state[f"analise_gemini_{item_id}"] = (digest, analise)
+                        digest_atual = hashlib.sha256(str(dados.get("texto_original") or dados.get("tese_resumo") or "").encode("utf-8")).hexdigest()
+                        resultado_analise = st.session_state.get(f"analise_gemini_{item_id}")
+                        analise_sugerida = resultado_analise[1] if resultado_analise and resultado_analise[0] == digest_atual else ""
+                        if analise_sugerida:
+                            st.info(analise_sugerida)
+                        else:
+                            st.caption("A análise não é gerada nem enviada até você solicitar.")
+
+                        usar_sugestao = st.checkbox("Incluir esta análise na observação oficial", key=f"usar_sugestao_{item_id}", value=False, disabled=not bool(analise_sugerida))
                         observacao_extra = st.text_area("Observação pessoal ou complemento (opcional)", key=f"obs_extra_{item_id}")
                         comentario_final = "\n\n".join(
-                            parte for parte in (sugestao_observacao if usar_sugestao else "", observacao_extra.strip()) if parte
+                            parte for parte in (analise_sugerida if usar_sugestao else "", observacao_extra.strip()) if parte
                         ) or None
                         st.caption(f"Fonte: {dados.get('link_oficial') or item.get('documento') or 'não informada'}")
 
-                        editar_campos = st.checkbox("Editar os dados extraídos", key=f"editar_{item_id}")
+                        editar_campos = st.checkbox("✏️ Editar os dados extraídos antes de incluir", key=f"editar_{item_id}")
                         if editar_campos:
                             opcoes_tribunal = ["TRF1", "TRF5", "TNU", "TRU5", "STJ", "STF", "Outros"]
                             idx_tribunal = opcoes_tribunal.index(dados.get("tribunal", "Outros")) if dados.get("tribunal") in opcoes_tribunal else 6
@@ -219,21 +267,21 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                             dados_revisados = dados
 
                         c_ok, c_no = st.columns(2)
-                        if c_ok.button("✅ Aceitar individualmente", type="primary", key=f"aceitar_{item_id}", use_container_width=True):
+                        if c_ok.button("✅ Aceitar e incluir decisão", type="primary", key=f"aceitar_{item_id}", use_container_width=True):
                             if not str(dados_revisados.get("identificador") or "").strip() or not str(dados_revisados.get("titulo") or "").strip() or not str(dados_revisados.get("tese_resumo") or "").strip():
                                 st.error("Identificador, título e conteúdo são necessários para incluir a decisão.")
                             else:
-                                atualizar_candidato(item_id, dados_revisados)
+                                atualizar_candidato(item_id, dados_revisados, ator=st.session_state.get("email_logado"))
                                 if aceitar_candidato(item_id, comentario_final, st.session_state.get("email_logado")):
                                     st.session_state.pop(f"sel_revisao_{item_id}", None)
-                                    registrar_evento(st.session_state.get("email_logado"), "aceitar", "candidato", item_id)
                                     st.toast("Decisão incluída na base.")
                                     st.rerun()
+                                else:
+                                    st.warning("Esta decisão já existe na base. O candidato foi marcado como duplicado e retirado das pendências.")
 
-                        if c_no.button("⛔ Rejeitar individualmente", key=f"rejeitar_{item_id}", use_container_width=True):
+                        if c_no.button("⛔ Rejeitar decisão", key=f"rejeitar_{item_id}", use_container_width=True):
                             if revisar_candidato(item_id, "rejeitada", comentario_final, st.session_state.get("email_logado")):
                                 st.session_state.pop(f"sel_revisao_{item_id}", None)
-                                registrar_evento(st.session_state.get("email_logado"), "rejeitar", "candidato", item_id)
                                 st.toast("Candidato rejeitado.")
                                 st.rerun()
 
@@ -264,7 +312,7 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
 
             col_lote_add, col_lote_del, col_lote_clear = st.columns([2.5, 2.5, 1.5])
             with col_lote_add:
-                label_add = f"✅ Adicionar {total_selecionadas} decisões" if total_selecionadas > 0 else "✅ Adicionar decisões selecionadas"
+                label_add = f"✅ Adicionar {total_selecionadas} decisões selecionadas à base" if total_selecionadas > 0 else "Marque decisões acima para adicionar"
                 if st.button(label_add, type="primary", disabled=(total_selecionadas == 0), use_container_width=True, key="btn_lote_adicionar"):
                     with st.spinner("Gravando decisões selecionadas na base oficial..."):
                         aceitos, dups = aceitar_candidatos_em_lote(
@@ -279,7 +327,7 @@ def render_review_tab(tab_revisao, pode_editar: bool) -> None:
                         st.rerun()
 
             with col_lote_del:
-                label_del = f"⛔ Excluir / Rejeitar {total_selecionadas} decisões" if total_selecionadas > 0 else "⛔ Excluir / Rejeitar decisões selecionadas"
+                label_del = f"⛔ Rejeitar {total_selecionadas} decisões selecionadas" if total_selecionadas > 0 else "Marque decisões acima para rejeitar"
                 if st.button(label_del, disabled=(total_selecionadas == 0), use_container_width=True, key="btn_lote_excluir"):
                     with st.spinner("Rejeitando decisões selecionadas..."):
                         rejeitados = rejeitar_candidatos_em_lote(

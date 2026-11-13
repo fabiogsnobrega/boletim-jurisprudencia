@@ -38,6 +38,16 @@ def registrar_evento_auditoria(
         return int(cursor.lastrowid or 0)
 
 
+def _registrar_evento_conn(conn, ator, acao, recurso, recurso_id=None, detalhes=None):
+    """Grava auditoria na mesma transação SQLite da alteração correspondente."""
+    cursor = conn.execute(
+        "INSERT INTO auditoria (ator, acao, recurso, recurso_id, detalhes_json) VALUES (?, ?, ?, ?, ?)",
+        (ator, acao, recurso, str(recurso_id) if recurso_id is not None else None,
+         json.dumps(detalhes or {}, ensure_ascii=False, sort_keys=True)),
+    )
+    return int(cursor.lastrowid or 0)
+
+
 def listar_eventos_auditoria(limite: int = 100) -> List[Dict[str, Any]]:
     """Retorna eventos recentes, limitado para não carregar o histórico inteiro."""
     limite_seguro = max(1, min(int(limite), 500))
@@ -81,10 +91,13 @@ def adicionar_a_fila_revisao(
             "INSERT INTO fila_revisao (dados_json, origem, documento, criado_por) VALUES (?, ?, ?, ?)",
             (json.dumps(dados, ensure_ascii=False), origem, documento, criado_por),
         )
+        _registrar_evento_conn(conn, criado_por, "enfileirar_candidato", "fila_revisao", cursor.lastrowid,
+                               {"origem": origem, "documento": documento})
         return cursor.lastrowid or 0
 
 
-def listar_fila_revisao(status: str = "pendente") -> List[Dict[str, Any]]:
+def listar_fila_revisao(status: str = "pendente", duplicatas_primeiro: bool = True) -> List[Dict[str, Any]]:
+    """Retorna itens da fila com detecção de causa da duplicidade e ordenação prioritária."""
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM fila_revisao WHERE status = ? ORDER BY id ASC", (status,)
@@ -93,16 +106,76 @@ def listar_fila_revisao(status: str = "pendente") -> List[Dict[str, Any]]:
         for row in rows:
             item = dict(row)
             item["dados"] = json.loads(item.pop("dados_json"))
+            item["_duplicata"] = False
+            item["_motivo_duplicata"] = ""
             resultado.append(item)
+
+        if not duplicatas_primeiro or not resultado:
+            return resultado
+
+        # Identificação de duplicatas por CNJ ou hash
+        grupos_processo: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for item in resultado:
+            dados = item["dados"]
+            numero = str(dados.get("processo_origem") or dados.get("identificador") or "")
+            match = re.search(r"\d{7}-\d{2}\.\d{4}\.4\.\d{2}\.\d{4}", numero)
+            tribunal = str(dados.get("tribunal") or "").strip().lower()
+            if match:
+                chave = (tribunal, match.group(0))
+                grupos_processo.setdefault(chave, []).append(item)
+
+        for (tribunal, num_proc), grupo in grupos_processo.items():
+            if len(grupo) > 1:
+                docs = {g.get("documento") or g.get("origem") for g in grupo}
+                if len(docs) == 1 and None not in docs and "" not in docs:
+                    motivo = "Documento repetido: o mesmo boletim foi enviado mais de uma vez ou o processo foi citado duas vezes no mesmo boletim"
+                else:
+                    motivo = "Processo repetido: o mesmo número CNJ consta em fontes ou boletins diferentes"
+                for g in grupo:
+                    g["_duplicata"] = True
+                    g["_motivo_duplicata"] = motivo
+
+        # Ordena trazendo as duplicadas no início da fila
+        resultado.sort(key=lambda i: (0 if i["_duplicata"] else 1, i["id"]))
         return resultado
 
 
-def atualizar_candidato(candidato_id: int, dados: DecisionData) -> bool:
+def buscar_decisoes_correlatas(dados: dict, limite: int = 3) -> List[Dict[str, Any]]:
+    """Busca na base oficial decisões já aprovadas com temas ou matérias similares."""
+    ramo = dados.get("ramo")
+    texto = str(dados.get("texto_original") or dados.get("tese_resumo") or "").lower()
+    identificador = dados.get("identificador", "")
+
+    palavras_chave = []
+    for termo in ["militar", "concurso", "servidor", "precatório", "pensão", "reajuste", "28,86", "dano moral", "posse", "edital"]:
+        if termo in texto or (ramo and termo in ramo.lower()):
+            palavras_chave.append(termo)
+
+    with get_connection() as conn:
+        if palavras_chave:
+            condicoes = " OR ".join(["tese_resumo LIKE ? OR titulo LIKE ?" for _ in palavras_chave[:4]])
+            params: List[Any] = []
+            for p in palavras_chave[:4]:
+                params.extend([f"%{p}%", f"%{p}%"])
+            query = f"SELECT id, tribunal, identificador, titulo, ramo, status FROM decisoes WHERE identificador != ? AND ({condicoes}) ORDER BY id DESC LIMIT ?"
+            params = [identificador] + params + [limite]
+            rows = conn.execute(query, params).fetchall()
+            return [dict(r) for r in rows]
+        elif ramo:
+            query = "SELECT id, tribunal, identificador, titulo, ramo, status FROM decisoes WHERE identificador != ? AND ramo = ? ORDER BY id DESC LIMIT ?"
+            rows = conn.execute(query, (identificador, ramo, limite)).fetchall()
+            return [dict(r) for r in rows]
+        return []
+
+
+def atualizar_candidato(candidato_id: int, dados: DecisionData, ator: Optional[str] = None) -> bool:
     with get_connection() as conn:
         cursor = conn.execute(
             "UPDATE fila_revisao SET dados_json = ? WHERE id = ? AND status = 'pendente'",
             (json.dumps(dados, ensure_ascii=False), candidato_id),
         )
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "editar_candidato", "candidato", candidato_id)
         return cursor.rowcount > 0
 
 
@@ -117,6 +190,8 @@ def revisar_candidato(
             "revisado_em = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pendente'",
             (acao, comentario, revisor, candidato_id),
         )
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, revisor, f"candidato_{acao}", "candidato", candidato_id)
         return cursor.rowcount > 0
 
 
@@ -151,20 +226,29 @@ def aceitar_candidato(candidato_id: int, comentario: Optional[str], revisor: Opt
             "texto_original", "hash", "usuario_importacao", "origem_boletim"
         )
         valores = [dados.get(campo) for campo in campos]
-        cursor = conn.execute(
-            f"INSERT INTO decisoes ({', '.join(campos)}) VALUES ({', '.join('?' for _ in campos)})",
-            valores,
-        )
+        try:
+            cursor = conn.execute(
+                f"INSERT INTO decisoes ({', '.join(campos)}) VALUES ({', '.join('?' for _ in campos)})",
+                valores,
+            )
+        except sqlite3.IntegrityError as exc:
+            if "decisoes.hash" not in str(exc):
+                raise
+            conn.execute(
+                "UPDATE fila_revisao SET status = 'rejeitada', comentario_usuario = ?, revisado_por = ?, "
+                "revisado_em = CURRENT_TIMESTAMP WHERE id = ?",
+                ("Duplicata descartada: já existe na base oficial", revisor, candidato_id),
+            )
+            _registrar_evento_conn(conn, revisor, "insercao_duplicada", "fila_revisao", candidato_id, {"hash": hash_decisao})
+            return False
         conn.execute(
             "UPDATE fila_revisao SET status = 'aceita', comentario_usuario = ?, revisado_por = ?, "
             "revisado_em = CURRENT_TIMESTAMP WHERE id = ?",
             (comentario, revisor, candidato_id),
         )
         novo_id = cursor.lastrowid or 0
-        conn.execute(
-            "INSERT INTO auditoria (ator, acao, recurso, recurso_id, detalhes_json) VALUES (?, ?, ?, ?, ?)",
-            (revisor, "aceitar_candidato", "decisoes", str(novo_id), json.dumps({"hash": hash_decisao, "candidato_id": candidato_id}, ensure_ascii=False)),
-        )
+        _registrar_evento_conn(conn, revisor, "aceitar_candidato", "decisoes", novo_id,
+                               {"hash": hash_decisao, "candidato_id": candidato_id})
         return True
 
 
@@ -271,7 +355,7 @@ def rejeitar_candidatos_em_lote(
         return total
 
 
-def registrar_fonte_verificada(url: str, tribunal: str, quantidade: int) -> None:
+def registrar_fonte_verificada(url: str, tribunal: str, quantidade: int, ator: Optional[str] = None) -> None:
     """Registra um endereço somente quando a extração encontrou candidatos."""
     if quantidade < 1:
         return
@@ -283,6 +367,8 @@ def registrar_fonte_verificada(url: str, tribunal: str, quantidade: int) -> None
             "verificado_em = CURRENT_TIMESTAMP",
             (url, tribunal, quantidade),
         )
+        _registrar_evento_conn(conn, ator, "verificar_fonte", "fonte_oficial",
+                               detalhes={"tribunal": tribunal, "candidatos": quantidade})
 
 
 def listar_fontes_recentes(limite: int = 8) -> List[Dict[str, Any]]:
@@ -305,6 +391,7 @@ def sugerir_atualizacao_fonte(tribunal: str, url: str, usuario: Optional[str]) -
             "INSERT INTO sugestoes_fontes (tribunal, url, sugerido_por) VALUES (?, ?, ?)",
             (tribunal, url.strip(), usuario),
         )
+        _registrar_evento_conn(conn, usuario, "sugerir_fonte", "tribunal", detalhes={"tribunal": tribunal})
         return cursor.lastrowid or 0
 
 
@@ -334,13 +421,17 @@ def revisar_sugestao_fonte(sugestao_id: int, aprovar: bool, revisor: Optional[st
             "UPDATE sugestoes_fontes SET status = ?, revisado_por = ?, revisado_em = CURRENT_TIMESTAMP WHERE id = ?",
             ("aprovada" if aprovar else "rejeitada", revisor, sugestao_id),
         )
+        _registrar_evento_conn(conn, revisor, "aprovar_fonte" if aprovar else "rejeitar_fonte",
+                               "sugestao_fonte", sugestao_id, {"tribunal": row["tribunal"]})
         return True
 
 
-def excluir_todas_pendencias_revisao() -> int:
+def excluir_todas_pendencias_revisao(ator: Optional[str] = None) -> int:
     """Remove somente candidatos ainda pendentes; mantém os já revisados."""
     with get_connection() as conn:
         cursor = conn.execute("DELETE FROM fila_revisao WHERE status = 'pendente'")
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "excluir_pendencias", "fila_revisao", detalhes={"removidas": cursor.rowcount})
         return cursor.rowcount
 
 
@@ -363,7 +454,7 @@ def encontrar_duplicatas_fila() -> List[List[Dict[str, Any]]]:
     return [sorted(grupo, key=lambda i: (-i["dados"]["_tamanho_conteudo"], i["id"])) for grupo in grupos.values() if len(grupo) > 1]
 
 
-def excluir_candidatos_fila(candidato_ids: List[int]) -> int:
+def excluir_candidatos_fila(candidato_ids: List[int], ator: Optional[str] = None) -> int:
     ids = sorted({int(candidato_id) for candidato_id in candidato_ids})
     if not ids:
         return 0
@@ -372,6 +463,8 @@ def excluir_candidatos_fila(candidato_ids: List[int]) -> int:
         cursor = conn.execute(
             f"DELETE FROM fila_revisao WHERE status = 'pendente' AND id IN ({placeholders})", ids
         )
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "deduplicar", "fila_revisao", detalhes={"ids": ids, "removidas": cursor.rowcount})
         return cursor.rowcount
 
 
@@ -396,22 +489,26 @@ def encontrar_grupos_duplicados() -> List[List[Dict[str, Any]]]:
     return [sorted(grupo, key=lambda i: (-i["_tamanho_conteudo"], i["id"])) for grupo in grupos.values() if len(grupo) > 1]
 
 
-def excluir_decisoes(decisao_ids: List[int]) -> int:
+def excluir_decisoes(decisao_ids: List[int], ator: Optional[str] = None) -> int:
     ids = sorted({int(decisao_id) for decisao_id in decisao_ids})
     if not ids:
         return 0
     placeholders = ", ".join("?" for _ in ids)
     with get_connection() as conn:
         cursor = conn.execute(f"DELETE FROM decisoes WHERE id IN ({placeholders})", ids)
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "excluir_em_lote", "decisoes", detalhes={"ids": ids, "removidas": cursor.rowcount})
         return cursor.rowcount
 
 
-def resetar_sequencia_banco() -> None:
+def resetar_sequencia_banco(ator: Optional[str] = None) -> None:
     """Limpa as decisões e reseta o autoincremento para reiniciar do 1."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        quantidade = cursor.execute("SELECT COUNT(*) FROM decisoes").fetchone()[0]
         cursor.execute("DELETE FROM decisoes")
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='decisoes'")
+        _registrar_evento_conn(conn, ator, "resetar_base_demo", "decisoes", detalhes={"removidas": quantidade})
         conn.commit()
 
 
@@ -449,8 +546,10 @@ def verificar_status_responsavel() -> Tuple[bool, str, Optional[Dict[str, Any]]]
         return False, f"Acesso ainda não iniciado (vigência a partir de {data_ini_fmt}).", resp
 
 
-def salvar_responsavel_mes(email: str, senha: str, data_inicio: str, data_fim: str) -> int:
+def salvar_responsavel_mes(email: str, senha: str, data_inicio: str, data_fim: str, ator: Optional[str] = None) -> int:
     """Cadastra ou renova o responsável do ciclo mensal."""
+    if not senha or not senha.strip():
+        raise ValueError("A senha do responsável não pode ficar vazia.")
     with get_connection() as conn:
         cursor = conn.cursor()
         # Desativa anteriores
@@ -462,17 +561,20 @@ def salvar_responsavel_mes(email: str, senha: str, data_inicio: str, data_fim: s
             """,
             (email.strip().lower(), senha.strip(), data_inicio, data_fim),
         )
+        _registrar_evento_conn(conn, ator, "atualizar_responsavel", "responsavel_mes", cursor.lastrowid)
         conn.commit()
         return cursor.lastrowid or 0
 
 
-def atualizar_senha_responsavel(responsavel_id: int, senha_hash: str) -> bool:
+def atualizar_senha_responsavel(responsavel_id: int, senha_hash: str, ator: Optional[str] = None) -> bool:
     """Atualiza somente o hash da senha para migração segura de registros antigos."""
     with get_connection() as conn:
         cursor = conn.execute(
             "UPDATE responsavel_mes SET senha = ? WHERE id = ?",
             (senha_hash, responsavel_id),
         )
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "migrar_senha_responsavel", "responsavel_mes", responsavel_id)
         return cursor.rowcount > 0
 
 
@@ -539,25 +641,19 @@ def inserir_decisao(
             """,
             dados_completos,
         )
-        conn.commit()
         novo_id = cursor.lastrowid or 0
-
-        registrar_evento_auditoria(
-            ator=usuario,
-            acao="insercao_decisao",
-            recurso="decisoes",
-            recurso_id=str(novo_id),
-            detalhes={"hash": hash_decisao, "origem": origem},
-        )
+        _registrar_evento_conn(conn, usuario, "insercao_decisao", "decisoes", novo_id,
+                               {"hash": hash_decisao, "origem": origem})
         return novo_id
 
 
-def excluir_decisao(decisao_id: int) -> bool:
+def excluir_decisao(decisao_id: int, ator: Optional[str] = None) -> bool:
     """Exclui uma decisão do banco pelo ID."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM decisoes WHERE id = ?", (decisao_id,))
-        conn.commit()
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "excluir", "decisao", decisao_id)
         return cursor.rowcount > 0
 
 
@@ -566,6 +662,7 @@ def atualizar_verificacao(
     nova_data_limite: Optional[str] = None,
     novo_status: Optional[str] = None,
     remover_alerta: bool = False,
+    ator: Optional[str] = None,
 ) -> bool:
     """Atualiza a data limite de verificação ou conclui o alerta."""
     with get_connection() as conn:
@@ -588,7 +685,9 @@ def atualizar_verificacao(
                 """,
                 (nova_data_limite, novo_status, decisao_id),
             )
-        conn.commit()
+        if cursor.rowcount:
+            _registrar_evento_conn(conn, ator, "atualizar_verificacao", "decisao", decisao_id,
+                                   {"remover_alerta": remover_alerta})
         return cursor.rowcount > 0
 
 

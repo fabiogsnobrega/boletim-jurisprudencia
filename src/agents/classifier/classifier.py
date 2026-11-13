@@ -17,7 +17,7 @@ PESOS_TEMATICOS = {
         "servidor público", "servidora pública", "servidores públicos", "remuneração",
         "vencimentos", "piso salarial", "magistério", "professores", "paridade",
         "aposentadoria por invalidez", "reversão", "lei 8.112", "progressão funcional",
-        "bônus de eficiência", "bepata", "inss", "perito médico", "gratificação", "geac",
+        "bônus de eficiência", "bepata", "perito médico", "gratificação", "geac",
         "reajuste de 28,86%", "pasep"
     ],
     "Direito Administrativo / Concurso Público": [
@@ -75,12 +75,10 @@ class ClassificadorJurisprudenciaML:
         if not texto:
             return "Sem texto suficiente para avaliação de relevância."
 
-        # Prediz ramo e confiança
-        ramo, confianca = self.predizer_ramo(texto)
-        # Formata a confiança como porcentagem
-        perc = f"{confianca * 100:.0f}%"
-        # Mensagem de sugestão
-        return f"Este caso parece ser relevante para *{ramo}* (confiança: {perc})."
+        # Prediz ramo
+        ramo, _ = self.predizer_ramo(texto)
+        # Mensagem direta sem jargão estatístico
+        return f"Matéria identificada: **{ramo}**"
 
     def predizer_ramo(self, texto: str) -> Tuple[str, float]:
         """Retorna o ramo previsto e uma pontuação heurística de confiança."""

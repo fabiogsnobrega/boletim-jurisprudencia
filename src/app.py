@@ -4,6 +4,7 @@ Azul Clássico (#122449), Dourado/Âmbar (#D89C1B), Areia/Off-White (#FCFBF8 / #
 """
 
 import os
+from pathlib import Path
 
 import streamlit as st
 from database import (
@@ -42,217 +43,10 @@ if "usuario_logado" not in st.session_state:
 if "email_logado" not in st.session_state:
     st.session_state["email_logado"] = ""
 
-# 3. Estilização CSS Personalizada - Padrão IDA Legal
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap');
+# 3. Estilização CSS Personalizada - Padrão Editorial Minimalista
+st.markdown('<style>' + (Path(__file__).parent / 'assets' / 'style.css').read_text(encoding='utf-8') + '</style>', unsafe_allow_html=True)
 
-    /* Tipografia e cores globais */
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        color: #17202E;
-    }
-
-    h1, h2, h3, .brand-title {
-        font-family: 'Playfair Display', Georgia, serif !important;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-    }
-
-    /* Cabeçalho Principal Estilo IDA Legal */
-    .main-header {
-        background: linear-gradient(135deg, #122449 0%, #17325F 50%, #1E3C75 100%);
-        padding: 30px 34px;
-        border-radius: 14px;
-        color: #FFFFFF;
-        margin-bottom: 24px;
-        border-bottom: 4px solid #D89C1B;
-        box-shadow: 0 10px 30px -10px rgba(18, 36, 73, 0.28);
-    }
-    .main-header h1 {
-        font-family: 'Playfair Display', Georgia, serif !important;
-        color: #FFFFFF !important;
-        font-size: 2.3rem !important;
-        margin: 0;
-    }
-    .main-header p {
-        color: #F1D292 !important;
-        font-size: 1.05rem !important;
-        margin-top: 8px !important;
-        margin-bottom: 0 !important;
-        letter-spacing: 0.02em;
-        font-weight: 400;
-    }
-
-    /* Cards de Notícias */
-    .noticia-card {
-        background-color: #FFFFFF;
-        border: 1px solid #E6E4DF;
-        border-top: 4px solid #122449;
-        border-radius: 12px;
-        padding: 24px 28px;
-        margin-bottom: 22px;
-        box-shadow: 0 4px 18px -2px rgba(18, 36, 73, 0.06), 0 2px 6px -1px rgba(18, 36, 73, 0.03);
-        transition: all 0.25s ease-in-out;
-    }
-    .noticia-card:hover {
-        box-shadow: 0 12px 30px -4px rgba(18, 36, 73, 0.12);
-        border-color: #D89C1B;
-        transform: translateY(-2px);
-    }
-    .noticia-title {
-        font-family: 'Playfair Display', Georgia, serif !important;
-        color: #122449 !important;
-        font-size: 1.35rem !important;
-        font-weight: 700 !important;
-        margin: 12px 0 6px 0 !important;
-        line-height: 1.35 !important;
-    }
-
-    /* Cards de Alerta (Radar) */
-    .alerta-card {
-        background-color: #FFFFFF;
-        border-radius: 12px;
-        padding: 24px 28px;
-        margin-bottom: 22px;
-        box-shadow: 0 4px 18px -2px rgba(18, 36, 73, 0.06);
-        transition: all 0.25s ease-in-out;
-    }
-    .alerta-card:hover {
-        box-shadow: 0 12px 30px -4px rgba(18, 36, 73, 0.12);
-        transform: translateY(-2px);
-    }
-
-    /* Caixas de Conteúdo (Tese e Comentários) */
-    .tese-box {
-        background-color: #F4F6FA;
-        border-left: 4px solid #122449;
-        padding: 15px 18px;
-        border-radius: 6px;
-        margin: 14px 0 10px 0;
-        color: #17202E;
-        font-size: 0.96rem;
-        line-height: 1.55;
-    }
-    .comentario-box {
-        background-color: #FAF6ED;
-        border-left: 4px solid #D89C1B;
-        padding: 15px 18px;
-        border-radius: 6px;
-        margin: 10px 0 12px 0;
-        color: #4A3912;
-        font-size: 0.94rem;
-        line-height: 1.55;
-    }
-
-    /* Badges de Identificação */
-    .badge-registro {
-        background-color: #122449;
-        color: #F3D489;
-        border: 1px solid #D89C1B;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 700;
-        font-size: 0.85rem;
-        display: inline-block;
-        margin-right: 8px;
-    }
-    .badge-tribunal {
-        background-color: #1A3668;
-        color: #FFFFFF;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
-        display: inline-block;
-        margin-right: 8px;
-    }
-    .badge-ramo {
-        background-color: #EAE6DF;
-        color: #2C2925;
-        border: 1px solid #DCD8D0;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
-        display: inline-block;
-        margin-right: 8px;
-    }
-    .badge-status {
-        background-color: #F1F4F9;
-        color: #2A3B52;
-        border: 1px solid #D5DEEB;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-weight: 500;
-        font-size: 0.85rem;
-        display: inline-block;
-    }
-
-    /* Badges de Prazos */
-    .badge-alerta-vencido {
-        background-color: #FEE2E2;
-        color: #991B1B;
-        border: 1px solid #F87171;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-weight: 700;
-        font-size: 0.88rem;
-        display: inline-block;
-    }
-    .badge-alerta-hoje {
-        background-color: #FEF3C7;
-        color: #92400E;
-        border: 1px solid #F59E0B;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-weight: 700;
-        font-size: 0.88rem;
-        display: inline-block;
-    }
-    .badge-alerta-em-dia {
-        background-color: #E8EEF8;
-        color: #122449;
-        border: 1px solid #93B4E4;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-weight: 700;
-        font-size: 0.88rem;
-        display: inline-block;
-    }
-
-    /* Banners de Sessão */
-    .auth-banner-admin {
-        background-color: #122449;
-        color: #FFFFFF;
-        border-left: 5px solid #D89C1B;
-        padding: 12px 18px;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        box-shadow: 0 4px 12px rgba(18, 36, 73, 0.1);
-    }
-    .auth-banner-resp {
-        background-color: #1B3B36;
-        color: #FFFFFF;
-        border-left: 5px solid #D89C1B;
-        padding: 12px 18px;
-        border-radius: 8px;
-        margin-bottom: 18px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        box-shadow: 0 4px 12px rgba(27, 59, 54, 0.1);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# 4. Cabeçalho Principal Estilo IDA Legal
+# 4. Cabeçalho Principal Editorial
 st.markdown(
     '<div class="main-header">'
     '<h1>⚖️ Boletim de Jurisprudência</h1>'
@@ -349,7 +143,7 @@ else:
                     st.error(f"Acesso negado: {msg_val}")
                 elif autenticar_responsavel(email_limpo, senha_limpa, resp):
                     if senha_precisa_migracao(resp["senha"]):
-                        atualizar_senha_responsavel(resp["id"], hash_senha(senha_limpa))
+                        atualizar_senha_responsavel(resp["id"], hash_senha(senha_limpa), ator=email_limpo)
                     st.session_state["usuario_logado"] = "responsavel"
                     st.session_state["email_logado"] = email_limpo
                     st.success(f"Acesso liberado como Responsável do Mês ({msg_val})!")
@@ -466,7 +260,10 @@ render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_editar
 render_importacao(tab_importar, pode_editar)
 
 
-render_review_tab(tab_revisao, pode_editar)
+try:
+    render_review_tab(tab_revisao, pode_editar, usuario_atual == "admin")
+except TypeError:
+    render_review_tab(tab_revisao, pode_editar)
 
 
 render_base_tabular(tab_tabela, todas_decisoes, pode_editar)

@@ -17,12 +17,12 @@ def detectar_tribunal(texto: str) -> str:
     texto_upper = texto.upper()
     if "TRF1" in texto_upper or "1ª REGIÃO" in texto_upper or "PRIMEIRA REGIÃO" in texto_upper:
         return "TRF1"
+    if "TRU5" in texto_upper or re.search(r"\bTRU\b", texto_upper) or "TURMA REGIONAL DE UNIFORMIZAÇÃO" in texto_upper:
+        return "TRU5"
     if "TRF5" in texto_upper or "5ª REGIÃO" in texto_upper or "QUINTA REGIÃO" in texto_upper:
         return "TRF5"
-    if "TNU" in texto_upper or "UNIFORMIZAÇÃO" in texto_upper:
+    if "TNU" in texto_upper or "TURMA NACIONAL DE UNIFORMIZAÇÃO" in texto_upper:
         return "TNU"
-    if "TRU5" in texto_upper or "TRU" in texto_upper:
-        return "TRU5"
     if "STJ" in texto_upper or "SUPERIOR TRIBUNAL DE JUSTIÇA" in texto_upper:
         return "STJ"
     if "STF" in texto_upper or "SUPREMO TRIBUNAL" in texto_upper:
@@ -31,11 +31,36 @@ def detectar_tribunal(texto: str) -> str:
 
 
 def eh_relevante_adm_militar(texto: str) -> bool:
-    """Verifica se o trecho possui termos de Direito Administrativo ou Militar."""
+    """Exige indicadores de vínculo público, carreira/concurso ou matéria militar."""
     texto_lower = texto.lower()
-    for termos in PESOS_TEMATICOS.values():
-        if any(termo in texto_lower for termo in termos):
-            return True
+    termos_militares = PESOS_TEMATICOS["Direito Militar"]
+    termos_concurso = (
+        "concurso público", "concurso para", "edital de concurso", "edital do concurso",
+        "vagas imediatas", "cadastro de reserva", "lista de espera", "investigação social",
+        "eliminação de candidato", "direito subjetivo à nomeação", "aprovado em concurso",
+        "aprovada em concurso", "nomeação em concurso",
+    )
+    termos_servidor = (
+        "servidor", "servidora", "servidores", "empregado público", "empregada pública",
+        "empregados públicos", "cargo público", "cargo efetivo", "regime estatutário",
+        "lei 8.112", "progressão funcional", "remuneração de servidor",
+        "gratificação de servidor", "pensão de servidor", "aposentadoria de servidor",
+        "aposentadoria por invalidez de servidor", "reversão de aposentadoria de servidor",
+        "magistério público", "professor da rede pública", "professores da rede pública",
+        "bônus de eficiência", "bepata", "geac", "reajuste de 28,86%",
+    )
+    termos_administracao_publica = (
+        "precatório", "precatórios", "rpv", "requisição de pequeno valor", "fazenda pública",
+    )
+    if any(termo in texto_lower for termo in termos_militares):
+        return True
+    if any(termo in texto_lower for termo in termos_concurso):
+        return True
+    if any(termo in texto_lower for termo in termos_servidor):
+        return True
+    if any(termo in texto_lower for termo in termos_administracao_publica):
+        return True
+    # Benefício previdenciário ou pedido administrativo isolado não demonstra vínculo público.
     return False
 
 

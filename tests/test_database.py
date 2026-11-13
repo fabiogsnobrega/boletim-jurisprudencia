@@ -61,10 +61,18 @@ def test_responsavel_mes_ciclo() -> None:
     assert fim_dia1 == "2026-11-01"
 
     # Salva e testa validação
-    salvar_responsavel_mes("teste@marcosinacio.adv.br", "123", ini, fim)
+    salvar_responsavel_mes("teste@marcosinacio.adv.br", "1234", ini, fim)
     valido, _, resp = verificar_status_responsavel()
     assert resp is not None
     assert resp["email"] == "teste@marcosinacio.adv.br"
+
+
+def test_responsavel_nao_aceita_senha_vazia():
+    import pytest
+    from database import salvar_responsavel_mes
+
+    with pytest.raises(ValueError, match="não pode ficar vazia"):
+        salvar_responsavel_mes("sem-senha@example.org", "  ", "2026-11-02", "2026-12-01")
 
 
 def test_hash_e_duplicatas() -> None:
@@ -150,3 +158,61 @@ def test_acoes_em_lote_revisao() -> None:
     for d in todas:
         if d["identificador"] in ("LOTE-001", "LOTE-002"):
             excluir_decisao(d["id"])
+
+
+def test_aprovacao_individual_de_duplicata_tem_estado_consistente_e_auditoria():
+    from database import (
+        aceitar_candidato,
+        adicionar_a_fila_revisao,
+        inserir_decisao,
+        listar_eventos_auditoria,
+        listar_fila_revisao,
+    )
+
+    decisao = {
+        "tribunal": "TRF1", "tipo": "Julgado", "identificador": "DUP-001",
+        "titulo": "Decisão duplicada", "ramo": "Direito Militar",
+        "status": "Transitado em Julgado", "tese_resumo": "Conteúdo duplicado de teste.",
+        "texto_original": "Conteúdo original igual para produzir o mesmo hash.",
+    }
+    assert inserir_decisao(decisao, usuario="teste") > 0
+    candidato_id = adicionar_a_fila_revisao(decisao, criado_por="teste")
+
+    assert aceitar_candidato(candidato_id, None, "revisor") is False
+    fila = listar_fila_revisao(status="rejeitada")
+    assert any(item["id"] == candidato_id and "Duplicata" in item["comentario_usuario"] for item in fila)
+    assert any(evento["acao"] == "insercao_duplicada" and evento["recurso_id"] == str(candidato_id)
+               for evento in listar_eventos_auditoria())
+
+
+def test_exclusao_e_evento_de_auditoria_sao_gravados_juntos():
+    from database import inserir_decisao, excluir_decisao, listar_eventos_auditoria
+
+    decision_id = inserir_decisao({
+        "tribunal": "TRF1", "tipo": "Julgado", "identificador": "AUD-DELETE",
+        "titulo": "Auditoria de exclusão", "ramo": "Direito Militar",
+        "status": "Transitado em Julgado", "tese_resumo": "Teste de auditoria.",
+    }, usuario="auditor")
+    assert excluir_decisao(decision_id, ator="auditor")
+    assert any(evento["acao"] == "excluir" and evento["recurso_id"] == str(decision_id)
+               for evento in listar_eventos_auditoria())
+
+
+def test_falha_na_auditoria_reverte_a_exclusao(monkeypatch):
+    import pytest
+    import database.repositories as repositories
+    from database import inserir_decisao, listar_decisoes
+
+    decision_id = inserir_decisao({
+        "tribunal": "TRF1", "tipo": "Julgado", "identificador": "AUD-ROLLBACK",
+        "titulo": "Rollback de exclusão", "ramo": "Direito Militar",
+        "status": "Transitado em Julgado", "tese_resumo": "Teste de transação.",
+    })
+
+    def falhar_auditoria(*_args, **_kwargs):
+        raise RuntimeError("falha simulada da auditoria")
+
+    monkeypatch.setattr(repositories, "_registrar_evento_conn", falhar_auditoria)
+    with pytest.raises(RuntimeError, match="falha simulada"):
+        repositories.excluir_decisao(decision_id, ator="auditor")
+    assert any(decisao["id"] == decision_id for decisao in listar_decisoes())

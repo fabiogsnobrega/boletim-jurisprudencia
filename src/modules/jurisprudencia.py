@@ -15,7 +15,6 @@ from database import (
     listar_decisoes,
 )
 from modules.prazos import calcular_prazo
-from services.audit import registrar_evento
 
 def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_editar: bool) -> None:
     """Renderiza o fluxo correspondente dentro da aba informada."""
@@ -41,11 +40,11 @@ def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_ed
                 data_limite_str = item.get("data_limite_verificacao") or date.today().strftime("%Y-%m-%d")
                 dias_restantes, texto_prazo, classe_badge = calcular_prazo(data_limite_str)
 
-                borda_card = "3px solid #DC2626" if dias_restantes <= 0 else "3px solid #D89C1B"
+                borda_card = "3px solid #D8B9A8" if dias_restantes <= 0 else "3px solid #B9C9D0"
                 num_reg_fmt = f"{item['id']:02d}"
 
                 alerta_card_html = (
-                    f'<div class="alerta-card" style="border: 1px solid #E6E4DF; border-left: {borda_card};">'
+                    f'<div class="alerta-card" style="border: 1px solid #D8D0B5; border-left: {borda_card};">'
                     f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
                     f'<div>'
                     f'<span class="badge-registro">Nº {num_reg_fmt}</span>'
@@ -56,7 +55,7 @@ def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_ed
                     f'<span class="{classe_badge}">{texto_prazo}</span>'
                     f'</div>'
                     f'<h3 class="noticia-title" style="margin-top: 12px !important;">{item["identificador"]} - {item["titulo"]}</h3>'
-                    f'<p style="color: #5C6B7E; margin-bottom: 8px; font-size: 0.9rem;">'
+                    f'<p style="color: #4F6474; margin-bottom: 8px; font-size: 0.9rem;">'
                     f'<strong>Processo:</strong> {item["processo_origem"] or "N/A"} | '
                     f'<strong>Órgão:</strong> {item["orgao_julgador"] or "N/A"} | '
                     f'<strong>Data do Evento:</strong> {item["data_evento"] or "N/A"}'
@@ -77,27 +76,23 @@ def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_ed
                     with col_act1:
                         if st.button("➕ Adiar 15 dias", key=f"adiar15_{item['id']}"):
                             nova_data = (date.today() + timedelta(days=15)).strftime("%Y-%m-%d")
-                            atualizar_verificacao(item["id"], nova_data_limite=nova_data)
-                            registrar_evento(st.session_state.get("email_logado"), "adiar_prazo", "decisao", item["id"], {"dias": 15})
+                            atualizar_verificacao(item["id"], nova_data_limite=nova_data, ator=st.session_state.get("email_logado"))
                             st.toast(f"Registro Nº {num_reg_fmt} prorrogado em 15 dias!")
                             st.rerun()
                     with col_act2:
                         if st.button("➕ Adiar 30 dias", key=f"adiar30_{item['id']}"):
                             nova_data = (date.today() + timedelta(days=30)).strftime("%Y-%m-%d")
-                            atualizar_verificacao(item["id"], nova_data_limite=nova_data)
-                            registrar_evento(st.session_state.get("email_logado"), "adiar_prazo", "decisao", item["id"], {"dias": 30})
+                            atualizar_verificacao(item["id"], nova_data_limite=nova_data, ator=st.session_state.get("email_logado"))
                             st.toast(f"Registro Nº {num_reg_fmt} prorrogado em 30 dias!")
                             st.rerun()
                     with col_act3:
                         if st.button("✅ Concluir / Transitou", key=f"transitou_{item['id']}"):
-                            atualizar_verificacao(item["id"], remover_alerta=True, novo_status="Transitado em Julgado")
-                            registrar_evento(st.session_state.get("email_logado"), "concluir_acompanhamento", "decisao", item["id"])
+                            atualizar_verificacao(item["id"], remover_alerta=True, novo_status="Transitado em Julgado", ator=st.session_state.get("email_logado"))
                             st.toast(f"Registro Nº {num_reg_fmt} concluído e marcado como Transitado!")
                             st.rerun()
                     with col_act4:
                         if st.button("🗑️ Excluir", key=f"del_alerta_{item['id']}"):
-                            excluir_decisao(item["id"])
-                            registrar_evento(st.session_state.get("email_logado"), "excluir", "decisao", item["id"])
+                            excluir_decisao(item["id"], ator=st.session_state.get("email_logado"))
                             st.toast(f"Registro Nº {num_reg_fmt} excluído!")
                             st.rerun()
 
@@ -166,35 +161,36 @@ def render_base_tabular(tab_tabela, todas_decisoes, pode_editar: bool) -> None:
                         format_func=lambda x: f"Nº {x:02d} - {[d['identificador'] for d in todas_decisoes if d['id'] == x][0]} - {[d['titulo'] for d in todas_decisoes if d['id'] == x][0]}",
                     )
                     if col_btn_del.button("Confirmar Exclusão", type="secondary"):
-                        excluir_decisao(id_para_excluir)
+                        excluir_decisao(id_para_excluir, ator=st.session_state.get("email_logado"))
                         st.toast(f"Registro Nº {id_para_excluir:02d} excluído!")
                         st.rerun()
 
-            col_exp1, col_exp2 = st.columns(2)
+            if pode_editar:
+                col_exp1, col_exp2 = st.columns(2)
 
             # Exportar CSV
-            csv_data = df.to_csv(index=False).encode("utf-8-sig")
-            col_exp1.download_button(
-                label="📥 Exportar Base Completa em CSV",
-                data=csv_data,
-                file_name=f"boletim_jurisprudencia_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                width="stretch",
-            )
+                csv_data = df.to_csv(index=False).encode("utf-8-sig")
+                col_exp1.download_button(
+                    label="📥 Exportar Base Completa em CSV",
+                    data=csv_data,
+                    file_name=f"boletim_jurisprudencia_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    width="stretch",
+                )
 
             # Exportar Excel
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="Jurisprudencia")
-            excel_data = excel_buffer.getvalue()
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                    df.to_excel(writer, index=False, sheet_name="Jurisprudencia")
+                excel_data = excel_buffer.getvalue()
 
-            col_exp2.download_button(
-                label="📊 Exportar Base Completa em Excel (.xlsx)",
-                data=excel_data,
-                file_name=f"boletim_jurisprudencia_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
-            )
+                col_exp2.download_button(
+                    label="📊 Exportar Base Completa em Excel (.xlsx)",
+                    data=excel_data,
+                    file_name=f"boletim_jurisprudencia_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
         else:
             st.info("A base está vazia.")
 
@@ -220,8 +216,7 @@ def render_base_tabular(tab_tabela, todas_decisoes, pode_editar: bool) -> None:
                     if st.button("Excluir cópias e manter a versão mais completa", key="excluir_duplicatas"):
                         if confirmar_duplicatas:
                             ids_duplicados = [registro["id"] for grupo in grupos_duplicados for registro in grupo[1:]]
-                            apagadas = excluir_decisoes(ids_duplicados)
-                            registrar_evento(st.session_state.get("email_logado"), "deduplicar", "decisoes", detalhes={"removidas": apagadas})
+                            apagadas = excluir_decisoes(ids_duplicados, ator=st.session_state.get("email_logado"))
                             st.success(f"{apagadas} cópias removidas.")
                             st.rerun()
                         else:

@@ -1,6 +1,6 @@
 # Boletim de Jurisprudência
 
-Projeto open source para coleta, organização, consulta e exportação de boletins de jurisprudência relacionados ao Direito Administrativo e Militar.
+Aplicação em desenvolvimento para organização, consulta e revisão humana de decisões de interesse em Direito Administrativo e Militar. A licença ainda não foi escolhida; o projeto não deve ser apresentado como open source até essa decisão e a inclusão do arquivo de licença.
 
 Objetivo
 
@@ -13,7 +13,7 @@ Fontes previstas
 - Turma Nacional de Uniformização (TNU)
 - Turma Regional de Uniformização da 5ª Região (TRU5)
 
-A disponibilidade e o formato das publicações de cada fonte serão verificados durante o desenvolvimento.
+A disponibilidade e o formato das publicações variam. A importação por URL exige link direto ao PDF em domínio oficial; páginas que listam boletins não são coletadas automaticamente. A extração heurística pode errar segmentação, campos e relevância, exige revisão humana, e não foi validada por amostra representativa de PDFs reais. OCR é apenas um stub e não está implementado. A análise Gemini só é solicitada após ação explícita e autorização do usuário; o texto selecionado é enviado ao Google.
 
 Funcionalidades planejadas
 
@@ -78,6 +78,40 @@ de decisões → classificação → avisos de validação → revisão. `extrac
 nomes antigos de importação e o pacote `database` mantém as funções públicas atuais,
 evitando uma migração simultânea da aplicação inteira.
 
+### Instalação e execução local
+
+Requer Python 3.11 ou superior. No PowerShell, a partir da raiz do repositório:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+streamlit run src/app.py
+```
+
+O banco SQLite local é criado em `data/jurisprudencia.db` ao iniciar. A aplicação não carrega dados demonstrativos automaticamente. Para uma demonstração isolada, rode `python src/seed_data.py`; o comando recusa bases não vazias. `python src/seed_data.py --reset-demo` apaga decisões locais antes de carregar a demonstração e deve ser usado apenas em uma base descartável.
+
+As credenciais administrativas são configuradas no arquivo `.streamlit/secrets.toml` na raiz do repositório (crie a pasta e o arquivo se ainda não existirem) ou pelas variáveis `BOLETIM_ADMIN_EMAIL` e `BOLETIM_ADMIN_PASSWORD`. O formato do arquivo é `admin_email = "..."` e `admin_password = "..."`. A senha de teste `1234` do usuário responsável é intencionalmente simples para desenvolvimento; não use em produção. A autenticação atual não substitui OIDC nem outros controles operacionais de produção.
+
+### Identidade Visual Editorial e Minimalista
+
+O design da aplicação foi padronizado em alinhamento ao portfólio profissional:
+- **Fundo Marfim:** `#F3EFE6`
+- **Azul-Marinho Editorial:** `#263D50` para cabeçalhos e títulos serifados (`Playfair Display`)
+- **Acentos Sóbrios:** Azul acinzentado (`#B9C9D0`), Verde-sálvia (`#C5CEBA`), Terracota suave (`#D8B9A8`) e Areia (`#D8D0B5`)
+- **Tipografia:** Serifada para títulos de precedentes e sem serifa (`Inter`) para textos, filtros e controles
+- **Espaçamento Otimizado:** Remoção do padding ocioso no topo para aproveitamento total da tela
+- **Acessibilidade:** Suporte nativo à preferência por movimento reduzido (`prefers-reduced-motion`) e foco visível por teclado
+
+### Ferramenta de Comparação e Benchmark (Teste de Fogo)
+
+Para confrontar a seleção manual de decisões com a extração automatizada:
+```powershell
+python scripts/avaliar_precisao_extracao.py --pdf caminho/boletim.pdf --processos "0801234-56.2026.4.05.0000,0001111-22.2026.4.01.0000"
+```
+Gera automaticamente a taxa de concordância, recall e aponta eventuais falsos negativos para afinamento cirúrgico dos agentes.
+
 ### Leitor de PDF avançado e OCR
 
 O módulo `src/agents/pdf_reader/reader.py` expõe:
@@ -118,8 +152,7 @@ Próximos passos antes da publicação online
    atual por senha fica como transição para desenvolvimento. [Documentação oficial](https://docs.streamlit.io/develop/concepts/connections/authentication).
 2. Decidir armazenamento persistente hospedado: o banco atual é SQLite local, que pode
    não persistir em todos os provedores de hospedagem.
-3. Completar a trilha de auditoria para todos os caminhos de alteração e manter política
-   de retenção dos eventos.
+3. Revisar cobertura e retenção da trilha de auditoria para todos os caminhos de alteração.
 4. Expandir testes para PDFs oficiais representativos, OCR e casos difíceis de segmentação.
 5. Só então definir coleta por tribunal, com escopo e limites específicos por fonte.
 
@@ -131,6 +164,6 @@ Aviso
 
 Este projeto tem finalidade de pesquisa, organização e consulta de informações jurisprudenciais. Os registros deverão ser conferidos nas respectivas fontes oficiais. Resumos e classificações produzidos pelo sistema não substituem o conteúdo oficial das publicações.
 
-Contribuições
+Licença e contribuições
 
-As instruções para instalação, execução e contribuição serão adicionadas conforme o projeto evoluir.
+A licença de uso e distribuição ainda precisa ser decidida pelo responsável. Até essa escolha, não há concessão explícita de licença open source. As instruções de contribuição serão definidas após essa decisão.

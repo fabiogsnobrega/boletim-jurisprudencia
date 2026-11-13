@@ -16,7 +16,6 @@ from database import (
     verificar_status_responsavel,
 )
 from services.authentication import hash_senha
-from services.audit import registrar_evento
 
 
 def render_novo_registro(tab_novo, pode_editar: bool) -> None:
@@ -85,7 +84,6 @@ def render_novo_registro(tab_novo, pode_editar: bool) -> None:
                             "conclusao_comentarios": novo_comentario,
                             "link_oficial": novo_link,
                         })
-                        registrar_evento(st.session_state.get("email_logado"), "inserir", "decisao", novo_id)
                         st.success("Registro adicionado com sucesso! Já disponível no noticiário.")
                         st.rerun()
 
@@ -123,7 +121,7 @@ def render_gestao(tab_gestao, usuario_atual: str) -> None:
                 email_resp_def = resp_atual["email"] if resp_atual else ""
                 c_r1, c_r2 = st.columns(2)
                 novo_email_resp = c_r1.text_input("E-mail do Responsável:", value=email_resp_def, placeholder="nome@marcosinacio.adv.br")
-                nova_senha_resp = c_r2.text_input("Senha de Acesso:", value="123", type="password")
+                nova_senha_resp = c_r2.text_input("Senha de Acesso:", value="1234", type="password", help="Credencial simples mantida apenas para testes locais; configure uma senha forte antes de uso em produção.")
 
                 c_d1, c_d2 = st.columns(2)
                 data_ini_input = c_d1.date_input("Início da Vigência (Dia 02):", value=ini_dt)
@@ -132,16 +130,16 @@ def render_gestao(tab_gestao, usuario_atual: str) -> None:
                 salvar_resp = st.form_submit_button("💾 Salvar e Autorizar Responsável", type="primary", use_container_width=True)
 
                 if salvar_resp:
-                    if not novo_email_resp.strip():
-                        st.error("Informe o e-mail do responsável.")
+                    if not novo_email_resp.strip() or not nova_senha_resp.strip():
+                        st.error("Informe o e-mail e uma senha não vazia para o responsável.")
                     else:
                         salvar_responsavel_mes(
                             email=novo_email_resp.strip(),
-                        senha=hash_senha(nova_senha_resp.strip()),
+                            senha=hash_senha(nova_senha_resp.strip()),
                             data_inicio=data_ini_input.strftime("%Y-%m-%d"),
                             data_fim=data_fim_input.strftime("%Y-%m-%d"),
+                            ator=st.session_state.get("email_logado"),
                         )
-                        registrar_evento(st.session_state.get("email_logado"), "atualizar_responsavel", "responsavel_mes")
                         st.success("Responsável do mês atualizado com sucesso!")
                         st.rerun()
 
@@ -162,12 +160,10 @@ def render_gestao(tab_gestao, usuario_atual: str) -> None:
                 c_aceitar, c_rejeitar = st.columns(2)
                 if c_aceitar.button("Aprovar novo endereço", key=f"aprovar_fonte_{sugestao['id']}"):
                     revisar_sugestao_fonte(sugestao["id"], True, st.session_state.get("email_logado"))
-                    registrar_evento(st.session_state.get("email_logado"), "aprovar_fonte", "sugestao_fonte", sugestao["id"], {"tribunal": sugestao["tribunal"]})
                     st.success(f"Endereço oficial de {sugestao['tribunal']} atualizado.")
                     st.rerun()
                 if c_rejeitar.button("Rejeitar sugestão", key=f"rejeitar_fonte_{sugestao['id']}"):
                     revisar_sugestao_fonte(sugestao["id"], False, st.session_state.get("email_logado"))
-                    registrar_evento(st.session_state.get("email_logado"), "rejeitar_fonte", "sugestao_fonte", sugestao["id"], {"tribunal": sugestao["tribunal"]})
                     st.rerun()
 
         with st.expander("Histórico de ações", expanded=False):

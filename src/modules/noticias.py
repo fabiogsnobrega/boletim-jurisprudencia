@@ -4,7 +4,6 @@ import streamlit as st
 
 from database import excluir_decisao
 from modules.prazos import calcular_prazo
-from services.audit import registrar_evento
 
 def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None:
     """Renderiza o fluxo correspondente dentro da aba informada."""
@@ -28,9 +27,9 @@ def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None
 
                 num_reg_fmt = f"{item['id']:02d}"
 
-                # Construção do card no padrão IDA Legal (sem quebras de linha com indentação para evitar bloco de código markdown)
-                link_html = f"<div style='margin-top: 8px;'><a href='{item['link_oficial']}' target='_blank' style='color: #122449; font-weight: 600; text-decoration: none;'>🔗 Consultar decisão no portal oficial →</a></div>" if item["link_oficial"] else ""
-                proc_html = f"<div style='color: #5C6B7E; font-size: 0.88rem; margin-top: 4px;'><strong>Processo Paradigma:</strong> <code>{item['processo_origem']}</code></div>" if item["processo_origem"] else ""
+                # Construção do card no padrão editorial minimalista
+                link_html = f"<div style='margin-top: 8px;'><a href='{item['link_oficial']}' target='_blank' style='color: #263D50; font-weight: 600; text-decoration: underline;'>🔗 Consultar decisão no portal oficial →</a></div>" if item["link_oficial"] else ""
+                proc_html = f"<div style='color: #4F6474; font-size: 0.88rem; margin-top: 4px;'><strong>Processo Paradigma:</strong> <code>{item['processo_origem']}</code></div>" if item["processo_origem"] else ""
                 coment_html = f"<div class='comentario-box'><strong>💡 Comentários / Conclusão Prática:</strong><br>{item['conclusao_comentarios']}</div>" if item["conclusao_comentarios"] else ""
 
                 card_html = (
@@ -45,7 +44,7 @@ def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None
                     f'<div>{alerta_tag}</div>'
                     f'</div>'
                     f'<h3 class="noticia-title">{item["titulo"]}</h3>'
-                    f'<div style="color: #5C6B7E; font-size: 0.9rem; margin-bottom: 8px;">'
+                    f'<div style="color: #4F6474; font-size: 0.9rem; margin-bottom: 8px;">'
                     f'<strong>{item["identificador"]}</strong> • {item["tipo"]} • '
                     f'Órgão: <em>{item["orgao_julgador"] or "N/A"}</em> • '
                     f'Relator: <em>{item["relator"] or "N/A"}</em> • '
@@ -66,8 +65,7 @@ def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None
                         st.write("")
                         st.write("")
                         if st.button("🗑️", key=f"del_noticia_{item['id']}", help=f"Excluir Registro Nº {num_reg_fmt}"):
-                            excluir_decisao(item["id"])
-                            registrar_evento(st.session_state.get("email_logado"), "excluir", "decisao", item["id"])
+                            excluir_decisao(item["id"], ator=st.session_state.get("email_logado"))
                             st.toast(f"Registro Nº {num_reg_fmt} excluído com sucesso!")
                             st.rerun()
                 else:

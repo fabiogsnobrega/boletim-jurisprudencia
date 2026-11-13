@@ -1,6 +1,8 @@
 """Script para popular o banco de dados com a carga inicial de jurisprudência real."""
 
-from database import calcular_ciclo_mensal, init_db, inserir_decisao, resetar_sequencia_banco, salvar_responsavel_mes
+import argparse
+
+from database import calcular_ciclo_mensal, init_db, inserir_decisao, listar_decisoes, resetar_sequencia_banco, salvar_responsavel_mes
 
 DECISOES_INICIAIS = [
     # --- STF ---
@@ -344,10 +346,13 @@ DECISOES_INICIAIS = [
 ]
 
 
-def seed() -> None:
-    """Inicializa e insere a carga de dados limpa, reiniciando o ID em 1."""
+def seed(reset: bool = False) -> None:
+    """Carrega dados demonstrativos explicitamente; protege bases já existentes."""
     init_db()
-    resetar_sequencia_banco()
+    if listar_decisoes() and not reset:
+        raise RuntimeError("A base já contém decisões. Use --reset-demo somente se deseja substituí-las.")
+    if reset:
+        resetar_sequencia_banco()
 
     for dec in DECISOES_INICIAIS:
         inserir_decisao(dec)
@@ -356,7 +361,7 @@ def seed() -> None:
     ini, fim = calcular_ciclo_mensal()
     salvar_responsavel_mes(
         email="responsavel@marcosinacio.adv.br",
-        senha="123",
+        senha="1234",
         data_inicio=ini,
         data_fim=fim,
     )
@@ -366,4 +371,7 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(description="Carrega dados de demonstração do Boletim de Jurisprudência.")
+    parser.add_argument("--reset-demo", action="store_true", help="Apaga as decisões existentes antes de carregar a demonstração.")
+    args = parser.parse_args()
+    seed(reset=args.reset_demo)

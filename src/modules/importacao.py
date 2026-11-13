@@ -1,6 +1,6 @@
 """Interface de importação de PDFs, texto e endereços oficiais."""
 
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 import streamlit as st
@@ -15,7 +15,66 @@ from database import (
 )
 from extractor import detectar_tribunal, extrair_decisoes_de_texto, extrair_texto_pdf
 from agents.classifier.classifier import classificador_global
-from services.audit import registrar_evento
+
+MAX_PDF_BYTES = 20 * 1024 * 1024
+DOMINIOS_OFICIAIS = ("trf1.jus.br", "trf5.jus.br", "cjf.jus.br")
+
+
+def _url_oficial_segura(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return (parsed.scheme == "https" and not parsed.username and not parsed.password
+            and parsed.port in (None, 443)
+            and any(host == dominio or host.endswith("." + dominio) for dominio in DOMINIOS_OFICIAIS))
+
+
+def baixar_pdf_oficial(url: str, sessao=requests) -> tuple[bytes, str]:
+    """Segue apenas redirecionamentos HTTPS oficiais e limita o corpo durante a leitura."""
+    atual = url.strip()
+    if not _url_oficial_segura(atual):
+        raise ValueError("Use um endereço HTTPS de TRF1, TRF5 ou CJF/TNU.")
+    headers = {"User-Agent": "BoletimJurisprudencia/1.0"}
+    for _ in range(6):
+        with sessao.get(atual, timeout=20, headers=headers, stream=True, allow_redirects=False) as resposta:
+            if resposta.is_redirect or resposta.is_permanent_redirect:
+                location = resposta.headers.get("Location")
+                if not location:
+                    raise ValueError("O servidor retornou um redirecionamento sem endereço de destino.")
+                destino = urljoin(atual, location)
+                if not _url_oficial_segura(destino):
+                    raise ValueError("O redirecionamento aponta para um endereço não oficial e foi bloqueado.")
+                atual = destino
+                continue
+            resposta.raise_for_status()
+            tamanho = resposta.headers.get("Content-Length")
+            if tamanho and int(tamanho) > MAX_PDF_BYTES:
+                raise ValueError("O arquivo excede o limite de 20 MB.")
+            partes = []
+            total = 0
+            for parte in resposta.iter_content(chunk_size=64 * 1024):
+                if not parte:
+                    continue
+                total += len(parte)
+                if total > MAX_PDF_BYTES:
+                    raise ValueError("O arquivo excede o limite de 20 MB.")
+                partes.append(parte)
+            conteudo = b"".join(partes)
+            if b"%PDF-" not in conteudo[:1024]:
+                raise ValueError("O endereço não retornou um arquivo PDF válido. Tente o link direto do PDF ou envie o arquivo.")
+            return conteudo, atual
+    raise ValueError("O endereço excedeu o limite de redirecionamentos oficiais.")
+
+
+def validar_pdf_enviado(arquivo) -> bytes:
+    """Valida tamanho declarado antes da leitura e assinatura PDF depois dela."""
+    if getattr(arquivo, "size", 0) > MAX_PDF_BYTES:
+        raise ValueError("O arquivo excede o limite de 20 MB.")
+    conteudo = arquivo.read(MAX_PDF_BYTES + 1)
+    if len(conteudo) > MAX_PDF_BYTES:
+        raise ValueError("O arquivo excede o limite de 20 MB.")
+    if b"%PDF-" not in conteudo[:1024]:
+        raise ValueError("O arquivo enviado não possui uma assinatura PDF válida.")
+    return conteudo
 
 
 def render_importacao(tab_importar, pode_editar: bool) -> None:
@@ -72,7 +131,6 @@ def render_importacao(tab_importar, pode_editar: bool) -> None:
                             st.error(f"Informe um endereço HTTPS pertencente ao domínio oficial {dominio_fonte}.")
                         else:
                             sugerir_atualizacao_fonte(tribunal_fonte, sugestao_url, st.session_state.get("email_logado"))
-                            registrar_evento(st.session_state.get("email_logado"), "sugerir_fonte", "tribunal", detalhes={"tribunal": tribunal_fonte})
                             st.success("Sugestão enviada para análise do administrador.")
                 if st.button("🔎 Consultar endereço oficial"):
                     try:
@@ -80,32 +138,16 @@ def render_importacao(tab_importar, pode_editar: bool) -> None:
                             raise ValueError("Informe ou selecione um endereço antes de consultar.")
                         st.session_state.pop("url_fonte_oficial", None)
                         st.session_state.pop("texto_fonte_oficial", None)
-                        parsed = urlparse(url_oficial.strip())
-                        host = (parsed.hostname or "").lower()
-                        dominios_oficiais = ("trf1.jus.br", "trf5.jus.br", "cjf.jus.br")
-                        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443) or not any(host == d or host.endswith("." + d) for d in dominios_oficiais):
+                        if not _url_oficial_segura(url_oficial.strip()):
                             st.error("Use um endereço HTTPS de TRF1, TRF5 ou CJF/TNU.")
                         else:
-                            resposta = requests.get(url_oficial.strip(), timeout=20, headers={"User-Agent": "BoletimJurisprudencia/1.0"})
-                            resposta.raise_for_status()
-                            url_final = urlparse(resposta.url)
-                            host_final = (url_final.hostname or "").lower()
-                            if not any(host_final == d or host_final.endswith("." + d) for d in dominios_oficiais):
-                                raise ValueError("O endereço redirecionou para fora dos domínios oficiais permitidos.")
-                            if len(resposta.content) > 20 * 1024 * 1024:
-                                raise ValueError("O arquivo excede o limite de 20 MB.")
-                            if "pdf" not in resposta.headers.get("Content-Type", "").lower() and resposta.content[:4] != b"%PDF":
-                                st.warning("Este endereço abriu uma página, não um boletim em PDF. Tente outro link, cole o endereço direto do PDF ou envie o arquivo.")
-                                resposta = None
-                            if resposta is None:
-                                texto_buscado = ""
-                            else:
-                                texto_buscado = extrair_texto_pdf(resposta.content)
+                            conteudo_pdf, url_final = baixar_pdf_oficial(url_oficial)
+                            texto_buscado = extrair_texto_pdf(conteudo_pdf)
                             if not texto_buscado.strip():
                                 st.warning("Não foi possível extrair texto deste PDF. Tente outro PDF ou cole o texto do boletim.")
-                            elif resposta is not None:
+                            else:
                                 st.session_state["texto_fonte_oficial"] = texto_buscado
-                                st.session_state["url_fonte_oficial"] = resposta.url
+                                st.session_state["url_fonte_oficial"] = url_final
                                 st.success(f"PDF recebido ({len(texto_buscado)} caracteres). Confira os candidatos antes de enviá-los à revisão.")
                     except ValueError as exc:
                         st.warning(str(exc))
@@ -117,11 +159,14 @@ def render_importacao(tab_importar, pode_editar: bool) -> None:
             elif formato_importacao == "📄 Enviar PDF":
                 arquivo_pdf = st.file_uploader("Selecione o arquivo PDF do Boletim:", type=["pdf"])
                 if arquivo_pdf is not None:
-                    bytes_pdf = arquivo_pdf.read()
-                    with st.spinner("Lendo arquivo PDF e analisando texto..."):
-                        texto_para_processar = extrair_texto_pdf(bytes_pdf)
-                        tribunal_sugerido = detectar_tribunal(texto_para_processar)
-                    st.success(f"PDF processado com sucesso! ({len(texto_para_processar)} caracteres). Tribunal sugerido: **{tribunal_sugerido}**.")
+                    try:
+                        bytes_pdf = validar_pdf_enviado(arquivo_pdf)
+                        with st.spinner("Lendo arquivo PDF e analisando texto..."):
+                            texto_para_processar = extrair_texto_pdf(bytes_pdf)
+                            tribunal_sugerido = detectar_tribunal(texto_para_processar)
+                        st.success(f"PDF processado com sucesso! ({len(texto_para_processar)} caracteres). Tribunal sugerido: **{tribunal_sugerido}**.")
+                    except ValueError as exc:
+                        st.error(str(exc))
             else:
                 texto_para_processar = st.text_area(
                     "Cole aqui o conteúdo do boletim informativo ou clipping:",
@@ -165,7 +210,8 @@ def render_importacao(tab_importar, pode_editar: bool) -> None:
                         st.session_state["origem_extracao_temp"] = st.session_state.get("url_fonte_oficial", "") if formato_importacao == "🌐 Usar fonte oficial" else "PDF ou texto fornecido pelo usuário"
                         if formato_importacao == "🌐 Usar fonte oficial" and candidatos:
                             registrar_fonte_verificada(
-                                st.session_state.get("url_fonte_oficial", ""), tribunal_escolhido, len(candidatos)
+                                st.session_state.get("url_fonte_oficial", ""), tribunal_escolhido,
+                                len(candidatos), ator=st.session_state.get("email_logado")
                             )
 
             if "decisoes_extraidas_temp" in st.session_state and st.session_state["decisoes_extraidas_temp"]:
@@ -192,7 +238,6 @@ def render_importacao(tab_importar, pode_editar: bool) -> None:
                                 documento=st.session_state.get("url_fonte_oficial") or "PDF/texto importado",
                                 criado_por=st.session_state.get("email_logado"),
                             )
-                        registrar_evento(st.session_state.get("email_logado"), "enfileirar_candidatos", "fila_revisao", detalhes={"quantidade": len(candidatos)})
                         del st.session_state["decisoes_extraidas_temp"]
                         st.success(f"{len(candidatos)} decisões enviadas à fila de revisão.")
                         st.rerun()
