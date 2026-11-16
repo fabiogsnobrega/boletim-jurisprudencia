@@ -224,3 +224,19 @@ __marimo__/
 data/**/*
 !data/**/
 !data/**/.gitkeep
+
+# Execução local e bancos temporários de testes
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_temp/
+.pytest_run_*/
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Configurações locais do Codex/Windows que não fazem parte do app
+/config.toml
+.streamlit/desktop.ini

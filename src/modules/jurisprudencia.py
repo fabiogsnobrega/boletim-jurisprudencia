@@ -1,6 +1,7 @@
 """Radar de acompanhamento de prazos de jurisprudência."""
 
 from datetime import date, datetime, timedelta
+from html import escape
 import io
 
 import pandas as pd
@@ -14,9 +15,18 @@ from database import (
     encontrar_grupos_duplicados,
     listar_decisoes,
 )
+from demo_data import filtrar_decisoes_demo
 from modules.prazos import calcular_prazo
 
-def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_editar: bool) -> None:
+
+def render_radar(
+    tab_alertas,
+    filtro_tribunal,
+    filtro_ramo,
+    busca_texto,
+    pode_editar: bool,
+    decisoes_demo: list[dict] | None = None,
+) -> None:
     """Renderiza o fluxo correspondente dentro da aba informada."""
     # -------------------------------------------------------------
     # ABA 2: RADAR DE ALERTAS (MONITORAMENTO DE PRAZOS)
@@ -25,13 +35,22 @@ def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_ed
         st.subheader("🚨 Painel de Acompanhamento e Prazos")
 
         # Consulta os alertas ordenados por urgência (prazos mais próximos de vencer primeiro)
-        alertas_lista = listar_decisoes(
-            tribunal=filtro_tribunal,
-            ramo=filtro_ramo,
-            somente_alertas=True,
-            busca=busca_texto if busca_texto else None,
-            ordem="alerta_prazo",
-        )
+        if decisoes_demo is None:
+            alertas_lista = listar_decisoes(
+                tribunal=filtro_tribunal,
+                ramo=filtro_ramo,
+                somente_alertas=True,
+                busca=busca_texto if busca_texto else None,
+                ordem="alerta_prazo",
+            )
+        else:
+            alertas_lista = [
+                decisao
+                for decisao in filtrar_decisoes_demo(
+                    decisoes_demo, filtro_tribunal, filtro_ramo, busca_texto
+                )
+                if decisao.get("em_alerta")
+            ]
 
         if not alertas_lista:
             st.success("Não há nenhum alerta pendente para os filtros selecionados!")
@@ -43,29 +62,36 @@ def render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_ed
                 borda_card = "3px solid #D8B9A8" if dias_restantes <= 0 else "3px solid #B9C9D0"
                 num_reg_fmt = f"{item['id']:02d}"
 
+                escapar = lambda valor: escape(str(valor or ""), quote=True)
+                comentario_html = (
+                    f'<div class="comentario-box">'
+                    f'<strong>Orientação para acompanhamento:</strong><br>{escapar(item.get("conclusao_comentarios"))}'
+                    f'</div>'
+                    if pode_editar and item.get("conclusao_comentarios")
+                    else '<div class="comentario-box"><strong>Orientação para acompanhamento:</strong><br>Acompanhar publicação de novo acórdão ou inclusão em pauta.</div>'
+                )
+
                 alerta_card_html = (
                     f'<div class="alerta-card" style="border: 1px solid #D8D0B5; border-left: {borda_card};">'
                     f'<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
                     f'<div>'
                     f'<span class="badge-registro">Nº {num_reg_fmt}</span>'
-                    f'<span class="badge-tribunal">{item["tribunal"]}</span>'
-                    f'<span class="badge-ramo">{item["ramo"]}</span>'
-                    f'<span class="badge-status">Status: {item["status"]}</span>'
+                    f'<span class="badge-tribunal">{escapar(item.get("tribunal"))}</span>'
+                    f'<span class="badge-ramo">{escapar(item.get("ramo"))}</span>'
+                    f'<span class="badge-status">Status: {escapar(item.get("status"))}</span>'
                     f'</div>'
                     f'<span class="{classe_badge}">{texto_prazo}</span>'
                     f'</div>'
-                    f'<h3 class="noticia-title" style="margin-top: 12px !important;">{item["identificador"]} - {item["titulo"]}</h3>'
+                    f'<h3 class="noticia-title" style="margin-top: 12px !important;">{escapar(item.get("identificador"))} - {escapar(item.get("titulo"))}</h3>'
                     f'<p style="color: #4F6474; margin-bottom: 8px; font-size: 0.9rem;">'
-                    f'<strong>Processo:</strong> {item["processo_origem"] or "N/A"} | '
-                    f'<strong>Órgão:</strong> {item["orgao_julgador"] or "N/A"} | '
-                    f'<strong>Data do Evento:</strong> {item["data_evento"] or "N/A"}'
+                    f'<strong>Processo:</strong> {escapar(item.get("processo_origem") or "N/A")} | '
+                    f'<strong>Órgão:</strong> {escapar(item.get("orgao_julgador") or "N/A")} | '
+                    f'<strong>Data do Evento:</strong> {escapar(item.get("data_evento") or "N/A")}'
                     f'</p>'
                     f'<div class="tese-box" style="margin-top: 10px;">'
-                    f'<strong>Questão em debate / Tese:</strong><br>{item["tese_resumo"]}'
+                    f'<strong>Questão em debate / Tese:</strong><br>{escapar(item.get("tese_resumo"))}'
                     f'</div>'
-                    f'<div class="comentario-box">'
-                    f'<strong>Orientação para acompanhamento:</strong><br>{item["conclusao_comentarios"] or "Acompanhar publicação de novo acórdão ou inclusão em pauta."}'
-                    f'</div>'
+                    f'{comentario_html}'
                     f'</div>'
                 )
                 st.markdown(alerta_card_html, unsafe_allow_html=True)

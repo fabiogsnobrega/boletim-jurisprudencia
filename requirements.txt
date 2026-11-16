@@ -1,6 +1,5 @@
 # Coleta e processamento de dados da web e PDFs
 requests>=2.31.0
-beautifulsoup4>=4.12.0
 pypdf>=4.0.0
 
 # Manipulação de dados e exportação tabular (CSV / Excel)
@@ -8,7 +7,7 @@ pandas>=2.2.0
 openpyxl>=3.1.0
 
 # Interface Web Interativa (Feed de Notícias e Radar de Alertas)
-streamlit>=1.35.0
+streamlit>=1.55.0
 
 # Testes e qualidade de código
 pytest>=8.0.0

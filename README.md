@@ -6,36 +6,38 @@ Objetivo
 
 Desenvolver uma ferramenta acessível a usuários sem conhecimento técnico, capaz de reunir informações de boletins de jurisprudência publicados por fontes oficiais, organizá-las em uma base de dados estruturada e permitir sua consulta e exportação.
 
-Fontes previstas
+Tribunais de interesse
 
 - Tribunal Regional Federal da 1ª Região (TRF1)
 - Tribunal Regional Federal da 5ª Região (TRF5)
 - Turma Nacional de Uniformização (TNU)
 - Turma Regional de Uniformização da 5ª Região (TRU5)
 
+Na inicialização, o sistema registra URLs padrão para TRF1, TRF5 e TNU. O TRU5 está
+listado como tribunal de interesse, mas não possui URL padrão cadastrada.
+
 A disponibilidade e o formato das publicações variam. A importação por URL exige link direto ao PDF em domínio oficial; páginas que listam boletins não são coletadas automaticamente. A extração heurística pode errar segmentação, campos e relevância, exige revisão humana, e não foi validada por amostra representativa de PDFs reais. OCR é apenas um stub e não está implementado. A análise Gemini só é solicitada após ação explícita e autorização do usuário; o texto selecionado é enviado ao Google.
 
-Funcionalidades planejadas
+Funcionalidades disponíveis
 
-- Coleta de boletins publicados nas fontes oficiais.
-- Extração e padronização dos dados.
-- Organização e consulta dos registros.
-- Filtros por tribunal, período e matéria, conforme a disponibilidade dos dados.
-- Exportação integral da base em formato tabular.
-- Identificação da fonte original e controle da qualidade dos dados.
+- Cadastro manual e importação de decisões a partir de PDF, texto e links diretos para PDFs oficiais.
+- Extração heurística, classificação temática e avisos de validação, com revisão humana antes da inclusão.
+- Consulta em cartões, radar de alertas, filtros e base tabular.
+- Exportação integral restrita a usuários autenticados.
+- Registro da origem, fila de revisão e eventos de auditoria.
+- Sugestões de atualização de endereços oficiais sujeitas à aprovação administrativa.
 
-Tecnologias previstas
+Tecnologias utilizadas
 
-- Python para processamento e coleta de dados.
-- Interface web para consulta.
-- Banco de dados estruturado.
-- Exportação para CSV e Excel.
-
-As tecnologias definitivas serão confirmadas durante a implementação.
+- Python e Streamlit para a aplicação web.
+- SQLite para persistência local.
+- Pandas e openpyxl para exportação tabular.
+- pypdf para leitura de PDFs e requests para requisições HTTP.
+- Integração opcional com Gemini, chamada somente por ação explícita do usuário.
 
 Princípios do projeto
 
-- Código aberto e documentação acessível.
+- Licença ainda não definida; não apresentar o projeto como open source até a escolha e inclusão de uma licença.
 - Fidelidade às fontes oficiais.
 - Rastreabilidade das informações.
 - Transparência sobre limitações e dados não disponíveis.
@@ -57,7 +59,8 @@ src/
 │   ├── pdf_reader/             # PDF para texto, sem alterar conteúdo
 │   ├── decision_parser/        # texto para candidatos estruturados
 │   ├── classifier/             # ramo jurídico e pontuação heurística
-│   └── validator/              # avisos de qualidade para revisão humana
+│   ├── validator/              # avisos de qualidade para revisão humana
+│   └── ai_analyst/             # análise Gemini opcional, chamada explicitamente
 ├── database/
 │   ├── connection.py           # conexão, esquema e migrações SQLite
 │   ├── models.py               # contrato tipado dos dados de decisão
@@ -65,6 +68,8 @@ src/
 ├── services/
 │   ├── authentication.py       # verificação de credenciais e hash de senha
 │   └── audit.py                # registro de ações administrativas
+├── assets/
+│   └── style.css               # estilos da interface
 └── extractor.py                # fachada de compatibilidade para a pipeline
 ```
 
@@ -80,7 +85,7 @@ evitando uma migração simultânea da aplicação inteira.
 
 ### Instalação e execução local
 
-Requer Python 3.11 ou superior. No PowerShell, a partir da raiz do repositório:
+Requer Python 3.11 ou superior e Streamlit 1.55 ou superior. No PowerShell, a partir da raiz do repositório:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -90,9 +95,9 @@ python -m pip install -r requirements.txt
 streamlit run src/app.py
 ```
 
-O banco SQLite local é criado em `data/jurisprudencia.db` ao iniciar. A aplicação não carrega dados demonstrativos automaticamente. Para uma demonstração isolada, rode `python src/seed_data.py`; o comando recusa bases não vazias. `python src/seed_data.py --reset-demo` apaga decisões locais antes de carregar a demonstração e deve ser usado apenas em uma base descartável.
+O banco SQLite local é criado em `data/jurisprudencia.db` ao iniciar. Para uma demonstração local persistida, rode `python src/seed_data.py`; o comando recusa bases não vazias e cria também um usuário de teste para o ciclo mensal. `python src/seed_data.py --reset-demo` apaga decisões locais antes de carregar a demonstração e deve ser usado apenas em uma base descartável. A seed não roda automaticamente na hospedagem.
 
-As credenciais administrativas são configuradas no arquivo `.streamlit/secrets.toml` na raiz do repositório (crie a pasta e o arquivo se ainda não existirem) ou pelas variáveis `BOLETIM_ADMIN_EMAIL` e `BOLETIM_ADMIN_PASSWORD`. O formato do arquivo é `admin_email = "..."` e `admin_password = "..."`. A senha de teste `1234` do usuário responsável é intencionalmente simples para desenvolvimento; não use em produção. A autenticação atual não substitui OIDC nem outros controles operacionais de produção.
+As credenciais administrativas são configuradas no arquivo `.streamlit/secrets.toml` na raiz do repositório (crie a pasta e o arquivo se ainda não existirem) ou pelas variáveis `BOLETIM_ADMIN_EMAIL` e `BOLETIM_ADMIN_PASSWORD`. O formato do arquivo é `admin_email = "..."` e `admin_password = "..."`. O fluxo de demonstração local mantém uma credencial deliberadamente simples; não execute a seed nem use credenciais de desenvolvimento em produção. A autenticação atual não substitui OIDC nem outros controles operacionais de produção.
 
 ### Identidade Visual Editorial e Minimalista
 
@@ -143,15 +148,36 @@ python -m pytest
 ```
 
 O `pyproject.toml` define o diretório de código (`src`) e o modo de importação dos
-testes. Os testes de banco usam arquivo temporário e não tocam a base local.
+testes. Os testes de banco usam arquivos temporários; esses artefatos não devem ser
+versionados nem enviados ao GitHub.
+
+### Implantação e persistência
+
+O ponto de entrada é `src/app.py`; o comando deve ser executado na raiz do
+repositório: `streamlit run src/app.py`. No Streamlit Community Cloud, selecione
+esse arquivo como entrypoint, escolha Python 3.12 e configure os secrets no painel
+da hospedagem. `GEMINI_API_KEY` é opcional; credenciais administrativas devem ficar
+fora do Git.
+
+O banco `data/jurisprudencia.db` é local e criado automaticamente. Se um visitante
+abrir uma instalação cuja base ainda não tem decisões, a interface mostra três exemplos
+fictícios em memória, em modo somente leitura. Eles não são gravados no banco, não são
+julgados reais e não devem ser citados. Um clone novo não cria automaticamente usuários
+de demonstração; o login administrativo depende das credenciais configuradas em secrets.
+
+O Streamlit Community Cloud não garante persistência dos arquivos locais entre
+reinicializações ou reconstruções. Portanto, a configuração SQLite local serve apenas
+para demonstração descartável; não use dados reais ou que precisem ser preservados até
+adotar um banco externo persistente com backup. Arquivos enviados no uploader ficam em
+memória durante o fluxo, não são armazenados como arquivos permanentes.
 
 Próximos passos antes da publicação online
 
 1. Configurar autenticação gerenciada por OIDC e papéis de autorização para produção.
    Streamlit oferece `st.login`, `st.user` e `st.logout` integrados ao OIDC; a verificação
    atual por senha fica como transição para desenvolvimento. [Documentação oficial](https://docs.streamlit.io/develop/concepts/connections/authentication).
-2. Decidir armazenamento persistente hospedado: o banco atual é SQLite local, que pode
-   não persistir em todos os provedores de hospedagem.
+2. Adotar armazenamento persistente hospedado antes de operar com dados reais; o SQLite
+   local não é armazenamento durável no Community Cloud.
 3. Revisar cobertura e retenção da trilha de auditoria para todos os caminhos de alteração.
 4. Expandir testes para PDFs oficiais representativos, OCR e casos difíceis de segmentação.
 5. Só então definir coleta por tribunal, com escopo e limites específicos por fonte.

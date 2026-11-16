@@ -1,9 +1,29 @@
 """Noticiário jurídico em cartões de leitura."""
 
+from html import escape
+from urllib.parse import urlsplit
+
 import streamlit as st
 
 from database import excluir_decisao
 from modules.prazos import calcular_prazo
+
+
+def _texto_html(valor) -> str:
+    """Escapa valores vindos do banco antes de inseri-los no HTML dos cartões."""
+    return escape(str(valor or ""), quote=True)
+
+
+def _link_http_seguro(valor) -> str:
+    """Aceita somente links HTTP(S) sem credenciais embutidas."""
+    url = str(valor or "").strip()
+    try:
+        partes = urlsplit(url)
+    except ValueError:
+        return ""
+    if partes.scheme not in {"http", "https"} or not partes.netloc or partes.username or partes.password:
+        return ""
+    return escape(url, quote=True)
 
 def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None:
     """Renderiza o fluxo correspondente dentro da aba informada."""
@@ -21,37 +41,42 @@ def render_noticias(tab_noticias, decisoes_filtradas, pode_editar: bool) -> None
                 if item["em_alerta"]:
                     if item.get("data_limite_verificacao"):
                         _, texto_prazo, classe_badge = calcular_prazo(item["data_limite_verificacao"])
-                        alerta_tag = f"<span class='{classe_badge}'>{texto_prazo}</span>"
+                        alerta_tag = f"<span class='{classe_badge}'>{_texto_html(texto_prazo)}</span>"
                     else:
-                        alerta_tag = f"<span class='badge-alerta-hoje'>🚨 ACOMPANHAR: {item['prazo_alerta']}</span>"
+                        alerta_tag = f"<span class='badge-alerta-hoje'>🚨 ACOMPANHAR: {_texto_html(item['prazo_alerta'])}</span>"
 
                 num_reg_fmt = f"{item['id']:02d}"
 
                 # Construção do card no padrão editorial minimalista
-                link_html = f"<div style='margin-top: 8px;'><a href='{item['link_oficial']}' target='_blank' style='color: #263D50; font-weight: 600; text-decoration: underline;'>🔗 Consultar decisão no portal oficial →</a></div>" if item["link_oficial"] else ""
-                proc_html = f"<div style='color: #4F6474; font-size: 0.88rem; margin-top: 4px;'><strong>Processo Paradigma:</strong> <code>{item['processo_origem']}</code></div>" if item["processo_origem"] else ""
-                coment_html = f"<div class='comentario-box'><strong>💡 Comentários / Conclusão Prática:</strong><br>{item['conclusao_comentarios']}</div>" if item["conclusao_comentarios"] else ""
+                link_seguro = _link_http_seguro(item.get("link_oficial"))
+                link_html = f"<div style='margin-top: 8px;'><a href='{link_seguro}' target='_blank' rel='noopener noreferrer' style='color: #263D50; font-weight: 600; text-decoration: underline;'>🔗 Consultar decisão no portal oficial →</a></div>" if link_seguro else ""
+                proc_html = f"<div style='color: #4F6474; font-size: 0.88rem; margin-top: 4px;'><strong>Processo Paradigma:</strong> <code>{_texto_html(item.get('processo_origem'))}</code></div>" if item.get("processo_origem") else ""
+                # Observações práticas podem conter estratégia interna; não são públicas.
+                coment_html = (
+                    f"<div class='comentario-box'><strong>💡 Comentários / Conclusão Prática:</strong><br>{_texto_html(item.get('conclusao_comentarios'))}</div>"
+                    if pode_editar and item.get("conclusao_comentarios") else ""
+                )
 
                 card_html = (
                     f'<div class="noticia-card">'
                     f'<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">'
                     f'<div>'
                     f'<span class="badge-registro">Nº {num_reg_fmt}</span>'
-                    f'<span class="badge-tribunal">{item["tribunal"]}</span>'
-                    f'<span class="badge-ramo">{item["ramo"]}</span>'
-                    f'<span class="badge-status">{item["status"]}</span>'
+                    f'<span class="badge-tribunal">{_texto_html(item.get("tribunal"))}</span>'
+                    f'<span class="badge-ramo">{_texto_html(item.get("ramo"))}</span>'
+                    f'<span class="badge-status">{_texto_html(item.get("status"))}</span>'
                     f'</div>'
                     f'<div>{alerta_tag}</div>'
                     f'</div>'
-                    f'<h3 class="noticia-title">{item["titulo"]}</h3>'
+                    f'<h3 class="noticia-title">{_texto_html(item.get("titulo"))}</h3>'
                     f'<div style="color: #4F6474; font-size: 0.9rem; margin-bottom: 8px;">'
-                    f'<strong>{item["identificador"]}</strong> • {item["tipo"]} • '
-                    f'Órgão: <em>{item["orgao_julgador"] or "N/A"}</em> • '
-                    f'Relator: <em>{item["relator"] or "N/A"}</em> • '
-                    f'Data: <em>{item["data_evento"] or "N/A"}</em>'
+                    f'<strong>{_texto_html(item.get("identificador"))}</strong> • {_texto_html(item.get("tipo"))} • '
+                    f'Órgão: <em>{_texto_html(item.get("orgao_julgador") or "N/A")}</em> • '
+                    f'Relator: <em>{_texto_html(item.get("relator") or "N/A")}</em> • '
+                    f'Data: <em>{_texto_html(item.get("data_evento") or "N/A")}</em>'
                     f'</div>'
                     f'{proc_html}'
-                    f'<div class="tese-box"><strong>📌 Tese / Decisão:</strong><br>{item["tese_resumo"]}</div>'
+                    f'<div class="tese-box"><strong>📌 Tese / Decisão:</strong><br>{_texto_html(item.get("tese_resumo"))}</div>'
                     f'{coment_html}'
                     f'{link_html}'
                     f'</div>'

@@ -4,6 +4,7 @@ import math
 import os
 import re
 import hashlib
+from html import escape
 
 import streamlit as st
 
@@ -61,7 +62,7 @@ def render_review_tab(tab_revisao, pode_editar: bool, eh_admin: bool = False, *a
                         docs = {g.get("documento") or g.get("origem") for g in grupo}
                         motivo_grp = "Mesmo arquivo enviado 2x" if len(docs) == 1 else "Processo citado em boletins diferentes"
                         st.markdown(
-                            f"**{grupo[0]['dados'].get('tribunal')} · {grupo[0]['dados'].get('processo_origem') or grupo[0]['dados'].get('identificador')}** "
+                            f"**{escape(str(grupo[0]['dados'].get('tribunal') or ''), quote=True)} · {escape(str(grupo[0]['dados'].get('processo_origem') or grupo[0]['dados'].get('identificador') or ''), quote=True)}** "
                             f"<span style='color: #D89C1B; font-size: 0.85rem;'>({motivo_grp})</span>",
                             unsafe_allow_html=True,
                         )

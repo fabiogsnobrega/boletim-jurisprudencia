@@ -4,6 +4,7 @@ Azul Clássico (#122449), Dourado/Âmbar (#D89C1B), Areia/Off-White (#FCFBF8 / #
 """
 
 import os
+from html import escape
 from pathlib import Path
 
 import streamlit as st
@@ -19,6 +20,7 @@ from modules.noticias import render_noticias
 from modules.jurisprudencia import render_base_tabular, render_radar
 from modules.importacao import render_importacao
 from modules.administracao import render_gestao, render_novo_registro
+from demo_data import criar_decisoes_demo, filtrar_decisoes_demo
 from services.authentication import (
     autenticar_administrador,
     autenticar_responsavel,
@@ -73,7 +75,7 @@ if usuario_atual == "admin":
     c_user, c_btn = st.columns([0.85, 0.15])
     with c_user:
         st.markdown(
-            f"<div class='auth-banner-admin'>👑 <strong>Administrador Conectado:</strong> {st.session_state['email_logado']} (Acesso Irrestrito)</div>",
+            f"<div class='auth-banner-admin'>👑 <strong>Administrador Conectado:</strong> {escape(str(st.session_state['email_logado']), quote=True)} (Acesso Irrestrito)</div>",
             unsafe_allow_html=True,
         )
     with c_btn:
@@ -95,7 +97,7 @@ elif usuario_atual == "responsavel":
     with c_user:
         _, msg_vig, _ = verificar_status_responsavel()
         st.markdown(
-            f"<div class='auth-banner-resp'>👤 <strong>Responsável do Mês:</strong> {st.session_state['email_logado']} | {msg_vig}</div>",
+            f"<div class='auth-banner-resp'>👤 <strong>Responsável do Mês:</strong> {escape(str(st.session_state['email_logado']), quote=True)} | {escape(str(msg_vig), quote=True)}</div>",
             unsafe_allow_html=True,
         )
     with c_btn:
@@ -170,16 +172,33 @@ filtro_ramo = st.sidebar.selectbox(
     ["Todos", "Administrativo", "Militar", "Servidor Público", "Concurso Público", "Previdenciário"],
 )
 
-# Consulta dos registros
+# Consulta dos registros. Clones novos não têm o banco privado local; para que a
+# vitrine não apareça vazia, visitantes recebem exemplos fictícios só em memória.
 todas_decisoes = listar_decisoes(ordem="recentes")
-decisoes_filtradas = listar_decisoes(
-    tribunal=filtro_tribunal,
-    ramo=filtro_ramo,
-    busca=busca_texto if busca_texto else None,
-    ordem="recentes",
-)
+modo_demo = not todas_decisoes and usuario_atual is None
+decisoes_demo = criar_decisoes_demo() if modo_demo else None
+if modo_demo:
+    todas_decisoes = decisoes_demo
+    decisoes_filtradas = filtrar_decisoes_demo(
+        todas_decisoes, filtro_tribunal, filtro_ramo, busca_texto
+    )
+else:
+    decisoes_filtradas = listar_decisoes(
+        tribunal=filtro_tribunal,
+        ramo=filtro_ramo,
+        busca=busca_texto if busca_texto else None,
+        ordem="recentes",
+    )
 alertas = [d for d in todas_decisoes if d["em_alerta"] == 1]
 transitados = [d for d in todas_decisoes if "Transitado" in d["status"]]
+
+if modo_demo:
+    st.warning(
+        "**Modo demonstração — somente leitura.** Os exemplos abaixo são fictícios, "
+        "não representam julgados reais e não devem ser citados nem usados como "
+        "orientação jurídica. Quando houver decisões reais na base, esta vitrine "
+        "será substituída automaticamente."
+    )
 
 # 7. Métricas Rápidas
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -254,7 +273,14 @@ if pode_editar:
 render_noticias(tab_noticias, decisoes_filtradas, pode_editar)
 
 
-render_radar(tab_alertas, filtro_tribunal, filtro_ramo, busca_texto, pode_editar)
+render_radar(
+    tab_alertas,
+    filtro_tribunal,
+    filtro_ramo,
+    busca_texto,
+    pode_editar,
+    decisoes_demo=decisoes_demo,
+)
 
 
 render_importacao(tab_importar, pode_editar)
