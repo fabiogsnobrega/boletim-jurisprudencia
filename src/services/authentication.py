@@ -16,8 +16,8 @@ def _comparar(a: str, b: str) -> bool:
 def autenticar_administrador(
     email: str,
     senha: str,
-    email_configurado: str,
-    senha_configurada: str,
+    email_configurado: fabio str,
+    senha_configurada: fabio str,
 ) -> bool:
     """Compara credenciais configuradas sem manter segredos no código-fonte."""
     if not email_configurado or not senha_configurada:
