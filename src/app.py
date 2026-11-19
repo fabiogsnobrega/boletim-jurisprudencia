@@ -10,17 +10,16 @@ from pathlib import Path
 import streamlit as st
 from database import (
     atualizar_senha_responsavel,
-    init_db,
     listar_decisoes,
     listar_fila_revisao,
     verificar_status_responsavel,
 )
+from recovery_data import carregar_recuperacao_publica
 from modules.revisao import render_review_tab
 from modules.noticias import render_noticias
 from modules.jurisprudencia import render_base_tabular, render_radar
 from modules.importacao import render_importacao
 from modules.administracao import render_gestao, render_novo_registro
-from demo_data import criar_decisoes_demo, filtrar_decisoes_demo
 from services.authentication import (
     autenticar_administrador,
     autenticar_responsavel,
@@ -36,8 +35,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Inicializa o banco de dados
-init_db()
+# Inicializa o banco e restaura, uma única vez, registros públicos verificados
+# quando a hospedagem cria um SQLite novo e vazio.
+carregar_recuperacao_publica()
 
 # 2. Gerenciamento de Sessão de Autenticação
 if "usuario_logado" not in st.session_state:
@@ -172,33 +172,16 @@ filtro_ramo = st.sidebar.selectbox(
     ["Todos", "Administrativo", "Militar", "Servidor Público", "Concurso Público", "Previdenciário"],
 )
 
-# Consulta dos registros. Clones novos não têm o banco privado local; para que a
-# vitrine não apareça vazia, visitantes recebem exemplos fictícios só em memória.
+# Consulta dos registros disponíveis no banco local da instalação.
 todas_decisoes = listar_decisoes(ordem="recentes")
-modo_demo = not todas_decisoes and usuario_atual is None
-decisoes_demo = criar_decisoes_demo() if modo_demo else None
-if modo_demo:
-    todas_decisoes = decisoes_demo
-    decisoes_filtradas = filtrar_decisoes_demo(
-        todas_decisoes, filtro_tribunal, filtro_ramo, busca_texto
-    )
-else:
-    decisoes_filtradas = listar_decisoes(
-        tribunal=filtro_tribunal,
-        ramo=filtro_ramo,
-        busca=busca_texto if busca_texto else None,
-        ordem="recentes",
-    )
+decisoes_filtradas = listar_decisoes(
+    tribunal=filtro_tribunal,
+    ramo=filtro_ramo,
+    busca=busca_texto if busca_texto else None,
+    ordem="recentes",
+)
 alertas = [d for d in todas_decisoes if d["em_alerta"] == 1]
 transitados = [d for d in todas_decisoes if "Transitado" in d["status"]]
-
-if modo_demo:
-    st.warning(
-        "**Modo demonstração — somente leitura.** Os exemplos abaixo são fictícios, "
-        "não representam julgados reais e não devem ser citados nem usados como "
-        "orientação jurídica. Quando houver decisões reais na base, esta vitrine "
-        "será substituída automaticamente."
-    )
 
 # 7. Métricas Rápidas
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -279,7 +262,6 @@ render_radar(
     filtro_ramo,
     busca_texto,
     pode_editar,
-    decisoes_demo=decisoes_demo,
 )
 
 
