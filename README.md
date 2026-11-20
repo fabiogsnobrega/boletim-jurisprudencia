@@ -1,5 +1,7 @@
 # Boletim de Jurisprudência
 
+**Aplicação publicada:** [Acessar o Boletim de Jurisprudência](https://boletim-jurisprudencia.streamlit.app/)
+
 Aplicação em desenvolvimento para organização, consulta e revisão humana de decisões de interesse em Direito Administrativo e Militar. A licença ainda não foi escolhida; o projeto não deve ser apresentado como open source até essa decisão e a inclusão do arquivo de licença.
 
 Objetivo
@@ -171,7 +173,7 @@ para demonstração descartável; não use dados reais ou que precisem ser prese
 adotar um banco externo persistente com backup. Arquivos enviados no uploader ficam em
 memória durante o fluxo, não são armazenados como arquivos permanentes.
 
-Próximos passos antes da publicação online
+Próximas etapas para uso continuado
 
 1. Configurar autenticação gerenciada por OIDC e papéis de autorização para produção.
    Streamlit oferece `st.login`, `st.user` e `st.logout` integrados ao OIDC; a verificação
